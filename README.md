@@ -104,11 +104,11 @@ docker tag reddit:latest kovtalex/otus-reddit:1.0
 
 docker run --name reddit -d -p 9292:9292 kovtalex/otus-reddit:1.0
 
-
-
-
-
+```
  packer build -var-file=packer/variables.json packer/docker.json
  terraform apply -auto-approve
+
  cd ansible
+
  ansible-playbook playbooks/deploy.yml
+```
