@@ -3,8 +3,8 @@ provider "google" {
   project = var.project
   region  = var.region
 }
-module "app" {
-  source           = "./modules/app"
+module "docker" {
+  source           = "./modules/docker"
   name             = var.name
   machine_type     = var.machine_type
   zone             = var.zone

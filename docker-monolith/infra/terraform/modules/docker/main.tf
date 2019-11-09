@@ -1,4 +1,4 @@
-resource "google_compute_instance" "app" {
+resource "google_compute_instance" "docker" {
   count        = var.node_count
   name         = "${var.name}${count.index+1}"
   machine_type = var.machine_type
