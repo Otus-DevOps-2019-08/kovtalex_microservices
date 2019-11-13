@@ -6,7 +6,7 @@
 
 Для выполнения ДЗ и проверки Dockerfile воспользуемся линтером: <https://github.com/hadolint/hadolint>
 
-Также для оптимизации инструкций Dockerfile воспользуеся практиками из: <https://docs.docker.com/engine/userguide/eng-image/dockerfile_best-practices/#sort-multi-line-arguments>
+Также для оптимизации инструкций Dockerfile воспользуемся практиками из: <https://docs.docker.com/engine/userguide/eng-image/dockerfile_best-practices/#sort-multi-line-arguments>
 
 ```
 docker pull hadolint/hadolint
@@ -25,7 +25,7 @@ docker-machine ls
 eval $(docker-machine env docker-host)
 ```
 
-Скачаем, распакуем и переменуем в src наше приложение: <https://github.com/express42/reddit/archive/microservices.zip>
+Скачаем, распакуем и переименуем в src наше приложение: <https://github.com/express42/reddit/archive/microservices.zip>
 
 Теперь наше приложение состоит из трех компонентов:
 
@@ -275,15 +275,13 @@ docker run -d --network=reddit -p 9292:9292 kovtalex/ui:3.0
 
 ```
 REPOSITORY          TAG                 IMAGE ID            CREATED             SIZE
-kovtalex/ui         2.0                 696f9010f0b4        8 minutes ago       411MB
-kovtalex/ui         3.0                 b3594948cd1a        30 minutes ago      297MB
+kovtalex/ui         3.0                 b3594948cd1a        About an hour ago   297MB
+kovtalex/ui         2.0                 696f9010f0b4        About an hour ago   411MB
+kovtalex/ui         1.0                 ee289401bd4c        About an hour ago   783MB
 kovtalex/post       3.0                 ee39d83673df        About an hour ago   109MB
 kovtalex/post       1.0                 5cfd7419f2f5        About an hour ago   109MB
 kovtalex/comment    3.0                 84bbc760cf18        About an hour ago   295MB
 kovtalex/comment    1.0                 013c2292f299        About an hour ago   770MB
-kovtalex/ui         1.0                 ee289401bd4c        2 hours ago         783MB
-ruby                2.2                 6c8e6f9667b2        18 months ago       715MB
-python              3.6.0-alpine        cb178ebbf0f2        2 years ago         88.6MB
 ```
 
 ## Технология контейнеризации. Введение в Docker
