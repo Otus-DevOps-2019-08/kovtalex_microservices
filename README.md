@@ -1,5 +1,291 @@
 # kovtalex_microservices
 
+[![Build Status](https://travis-ci.com/Otus-DevOps-2019-08/kovtalex_microservices.svg?branch=master)](https://travis-ci.com/Otus-DevOps-2019-08/kovtalex_microservices)
+
+## Docker-образы. Микросервисы
+
+Для выполнения ДЗ и проверки Dockerfile воспользуемся линтером: <https://github.com/hadolint/hadolint>
+
+Также для оптимизации инструкций Dockerfile воспользуеся практиками из: <https://docs.docker.com/engine/userguide/eng-image/dockerfile_best-practices/#sort-multi-line-arguments>
+
+```
+docker pull hadolint/hadolint
+
+docker run --rm -i hadolint/hadolint < ./ui/Dockerfile
+docker run --rm -i hadolint/hadolint < ./comment/Dockerfile  
+docker run --rm -i hadolint/hadolint < ./post-py/Dockerfile
+```
+
+### Опишем и соберем Docker-образы для сервисного приложения
+
+Подключимся к ранее созданному Docker хосту
+
+```
+docker-machine ls
+eval $(docker-machine env docker-host)
+```
+
+Скачаем, распакуем и переменуем в src наше приложение: <https://github.com/express42/reddit/archive/microservices.zip>
+
+Теперь наше приложение состоит из трех компонентов:
+
+- post-py - сервис отвечающий за написание постов
+- comment - сервис отвечающий за написание комментариев
+- ui - веб-интерфейс, работающий с другими сервисами
+
+Для работы нашего приложения также требуется база данных MongoDB
+
+./post-py/Dockerfile
+
+```
+FROM python:3.6.0-alpine
+
+WORKDIR /app
+COPY . /app
+
+RUN apk add --no-cache --virtual .build-deps gcc=5.3.0-r0 musl-dev=1.1.14-r16 && pip install -r /app/requirements.txt \
+  && apk del .build-deps
+
+ENV POST_DATABASE_HOST post_db
+ENV POST_DATABASE posts
+
+ENTRYPOINT ["python3", "post_app.py"]
+```
+
+./comment/Dockerfile
+
+```
+FROM ruby:2.2
+RUN apt-get update -qq && apt-get install --no-install-recommends -y build-essential=11.7 \
+  && apt-get clean && rm -rf /var/lib/apt/lists/*
+
+ENV APP_HOME /app
+RUN mkdir $APP_HOME
+WORKDIR $APP_HOME
+
+COPY Gemfile* $APP_HOME/
+RUN bundle install
+COPY . $APP_HOME
+
+ENV COMMENT_DATABASE_HOST comment_db
+ENV COMMENT_DATABASE comments
+
+CMD ["puma"]
+```
+
+./ui/Dockerfile
+
+```
+FROM ruby:2.2
+RUN apt-get update -qq && apt-get install -y build-essential
+
+ENV APP_HOME /app
+RUN mkdir $APP_HOME
+
+WORKDIR $APP_HOME
+ADD Gemfile* $APP_HOME/
+RUN bundle install
+ADD . $APP_HOME
+
+ENV POST_SERVICE_HOST post
+ENV POST_SERVICE_PORT 5000
+ENV COMMENT_SERVICE_HOST comment
+ENV COMMENT_SERVICE_PORT 9292
+
+CMD ["puma"]
+```
+
+Скачаем последний образ MongoDB: docker pull mongo:latest
+
+И соберем образы
+
+```
+docker build -t kovtalex/post:1.0 ./post-py
+docker build -t kovtalex/comment:1.0 ./comment
+docker build -t kovtalex/ui:1.0 ./ui
+```
+
+Создадим специальную сеть для приложения и запустим наши контейнеры:
+
+```
+docker network create reddit
+
+docker run -d --network=reddit --network-alias=post_db --network-alias=comment_db mongo:latest
+docker run -d --network=reddit --network-alias=post kovtalex/post:1.0
+docker run -d --network=reddit --network-alias=comment kovtalex/comment:1.0
+docker run -d --network=reddit -p 9292:9292 kotvalex/ui:1.0
+```
+
+- Мы создали bridge-сеть для контейнеров, так как сетевые алиасы не работают в сети по умолчанию.
+- Запустили наши контейнеры в этой сети.
+- Добавили сетевые алиасы контейнерам.
+- Сетевые алиасы могут быть использованы для сетевых соединений, как доменные имена.
+
+Проверим работу: <http://IP:9292/>
+
+Задание со *
+
+- Остановливаем контейнеры: docker kill $(docker ps -q)
+- Запускаем контейнеры с другими сетевыми алиасами через переменные окружения передаваемые при старте контейнеров
+
+```
+docker run -d --network=reddit --network-alias=reddit_post_db --network-alias=reddit_comment_db mongo:latest
+docker run -d --network=reddit --network-alias=reddit_post -e POST_DATABASE_HOST=reddit_post_db kovtalex/post:1.0
+docker run -d --network=reddit --network-alias=reddit_comment -e COMMENT_DATABASE_HOST=reddit_comment_db kovtalex/comment:1.0
+docker run -d --network=reddit -p 9292:9292 -e POST_SERVICE_HOST=reddit_post -e COMMENT_SERVICE_HOST=reddit_comment kovtalex/ui:1.0
+```
+
+- Проверяем работоспособность сервиса
+
+Так как наши образы занимают немало места, начнем их улучшение с ./ui/Dockerfile
+
+```
+FROM ubuntu:16.04
+RUN apt-get update \
+    && apt-get install --no-install-recommends -y ruby-full=* ruby-dev=* build-essential=* \
+    && gem install bundler:1.17.3 --no-ri --no-rdoc && apt-get clean && rm -rf /var/lib/apt/lists/*
+
+ENV APP_HOME /app
+RUN mkdir $APP_HOME
+
+WORKDIR $APP_HOME
+COPY Gemfile* $APP_HOME/
+RUN bundle install
+COPY . $APP_HOME
+
+ENV POST_SERVICE_HOST post
+ENV POST_SERVICE_PORT 5000
+ENV COMMENT_SERVICE_HOST comment
+ENV COMMENT_SERVICE_PORT 9292
+
+CMD ["puma"]
+```
+
+Пересоберем образ ui и проверим его размер
+
+```
+docker build -t kovtalex/ui:2.0 ./ui
+docker images
+
+REPOSITORY          TAG                 IMAGE ID            CREATED             SIZE
+kovtalex/ui         2.0                 6c68271947b0        24 seconds ago      458MB
+```
+
+Задание со *
+
+- попробуем уменьшить размер наших образов и начнем с Alpine Linux
+- используем apk вместо apt
+- уберем mkdir app, так как WORKDIR уже создает необходимую папку
+- после установки необходих зависимостей и установки основных компонентов, удалим их
+- объеденим поседовательные похожие инструкции в одну
+
+./comment/Dockerfile
+
+```
+FROM ruby:2.3-alpine
+ENV APP_HOME /app
+RUN apk add --no-cache build-base=0.5-r1 && gem install bundler:1.17.3 --no-document
+
+WORKDIR $APP_HOME
+COPY . $APP_HOME
+RUN bundle install
+
+ENV COMMENT_DATABASE_HOST comment_db
+ENV COMMENT_DATABASE comments
+
+CMD ["puma"]
+```
+
+./post-py/Dockerfile
+
+```
+FROM python:3.6.0-alpine
+ENV APP_HOME /app
+WORKDIR $APP_HOME
+COPY requirements.txt $APP_HOME
+
+RUN apk add --no-cache --virtual .build-deps gcc=5.3.0-r0 musl-dev=1.1.14-r16 && pip install -r /app/requirements.txt && \
+    apk del .build-deps
+
+COPY . $APP_HOME
+
+ENV POST_DATABASE_HOST post_db
+ENV POST_DATABASE posts
+
+ENTRYPOINT ["python3", "post_app.py"]
+```
+
+./ui/Dockerfile
+
+```
+FROM ruby:2.3-alpine
+ENV APP_HOME /app
+RUN apk add --no-cache build-base=0.5-r1 && gem install bundler:1.17.3 --no-document
+
+WORKDIR $APP_HOME
+COPY . $APP_HOME
+RUN bundle install
+
+ENV POST_SERVICE_HOST post
+ENV POST_SERVICE_PORT 5000
+ENV COMMENT_SERVICE_HOST comment
+ENV COMMENT_SERVICE_PORT 9292
+
+CMD ["puma"]
+```
+
+Пересоберем:
+
+```
+docker build -t kovtalex/post:3.0 ./post-py
+docker build -t kovtalex/comment:3.0 ./comment
+docker build -t kovtalex/ui:3.0 ./ui
+```
+
+Выключим старые копии контейнеров: docker kill $(docker ps -q)
+
+Запустим новые копии контейнеров и проверим работу приложения:
+
+```
+docker run -d --network=reddit --network-alias=post_db --network-alias=comment_db mongo:latest
+docker run -d --network=reddit --network-alias=post kovtalex/post:3.0
+docker run -d --network=reddit --network-alias=comment kovtalex/comment:3.0
+docker run -d --network=reddit -p 9292:9292 kovtalex/ui:3.0
+```
+
+Так как наши данные пропадают при каждой остановке контейнера mongo воспользуемся Docker Volume: docker volume create reddit_db
+
+Выключим старые копии контейнеров: docker kill $(docker ps -q)
+
+Запустим новые копии контейнеров и mongo с подключенным Docker Volume:
+
+```
+docker run -d --network=reddit --network-alias=post_db --network-alias=comment_db -v reddit_db:/data/db mongo:latest
+docker run -d --network=reddit --network-alias=post kovtalex/post:3.0
+docker run -d --network=reddit --network-alias=comment kovtalex/comment:3.0
+docker run -d --network=reddit -p 9292:9292 kovtalex/ui:3.0
+```
+
+- Зайдем на http://IP:9292/ и проверим работу приложения
+- Напишем пост
+- Перезапустим контейнеры снова
+- Проверим, что пост остался на месте
+
+Также проверим, что после оптимизаци наши образы стали занимать меньше места: docker images
+
+```
+REPOSITORY          TAG                 IMAGE ID            CREATED             SIZE
+kovtalex/ui         2.0                 696f9010f0b4        8 minutes ago       411MB
+kovtalex/ui         3.0                 b3594948cd1a        30 minutes ago      297MB
+kovtalex/post       3.0                 ee39d83673df        About an hour ago   109MB
+kovtalex/post       1.0                 5cfd7419f2f5        About an hour ago   109MB
+kovtalex/comment    3.0                 84bbc760cf18        About an hour ago   295MB
+kovtalex/comment    1.0                 013c2292f299        About an hour ago   770MB
+kovtalex/ui         1.0                 ee289401bd4c        2 hours ago         783MB
+ruby                2.2                 6c8e6f9667b2        18 months ago       715MB
+python              3.6.0-alpine        cb178ebbf0f2        2 years ago         88.6MB
+```
+
 ## Технология контейнеризации. Введение в Docker
 
 ### Знакомство с Docker
