@@ -2,6 +2,352 @@
 
 [![Build Status](https://travis-ci.com/Otus-DevOps-2019-08/kovtalex_microservices.svg?branch=master)](https://travis-ci.com/Otus-DevOps-2019-08/kovtalex_microservices)
 
+## Docker: сети, docker-compose
+
+### Работа с сетями в Docker
+
+Подключаемся к ранее созданному docker host’у
+
+```
+docker-machine ls
+eval $(docker-machine env docker-host)
+```
+
+#### None network driver
+
+```
+docker run -ti --rm --network none joffotron/docker-net-tools -c ifconfig
+
+lo        Link encap:Local Loopback  
+          inet addr:127.0.0.1  Mask:255.0.0.0
+          UP LOOPBACK RUNNING  MTU:65536  Metric:1
+          RX packets:0 errors:0 dropped:0 overruns:0 frame:0
+          TX packets:0 errors:0 dropped:0 overruns:0 carrier:0
+          collisions:0 txqueuelen:1000
+          RX bytes:0 (0.0 B)  TX bytes:0 (0.0 B)
+```
+
+В результате, видим:
+
+- что внутри контейнера из сетевых интерфейсов существует только loopback
+- сетевой стек самого контейнера работает (ping localhost), но без возможности контактировать с внешним миром
+- значит, можно даже запускать сетевые сервисы внутри такого контейнера, но лишь для локальных экспериментов (тестирование, контейнеры для выполнения разовых задач и т.д.)
+
+#### Host network driver
+
+```
+docker run -ti --rm --network host joffotron/docker-net-tools -c ifconfig
+
+docker0   Link encap:Ethernet  HWaddr 02:42:40:10:DB:61  
+          inet addr:172.17.0.1  Bcast:172.17.255.255  Mask:255.255.0.0
+          UP BROADCAST MULTICAST  MTU:1500  Metric:1
+          RX packets:0 errors:0 dropped:0 overruns:0 frame:0
+          TX packets:0 errors:0 dropped:0 overruns:0 carrier:0
+          collisions:0 txqueuelen:0
+          RX bytes:0 (0.0 B)  TX bytes:0 (0.0 B)
+
+ens4      Link encap:Ethernet  HWaddr 42:01:0A:84:00:14  
+          inet addr:10.132.0.20  Bcast:10.132.0.20  Mask:255.255.255.255
+          inet6 addr: fe80::4001:aff:fe84:14%32695/64 Scope:Link
+          UP BROADCAST RUNNING MULTICAST  MTU:1460  Metric:1
+          RX packets:5032 errors:0 dropped:0 overruns:0 frame:0
+          TX packets:3996 errors:0 dropped:0 overruns:0 carrier:0
+          collisions:0 txqueuelen:1000
+          RX bytes:108579982 (103.5 MiB)  TX bytes:397988 (388.6 KiB)
+
+lo        Link encap:Local Loopback  
+          inet addr:127.0.0.1  Mask:255.0.0.0
+          inet6 addr: ::1%32695/128 Scope:Host
+          UP LOOPBACK RUNNING  MTU:65536  Metric:1
+          RX packets:0 errors:0 dropped:0 overruns:0 frame:0
+          TX packets:0 errors:0 dropped:0 overruns:0 carrier:0
+          collisions:0 txqueuelen:1000
+          RX bytes:0 (0.0 B)  TX bytes:0 (0.0 B)
+```
+
+Сравним вывод команды с:
+
+```
+docker-machine ssh docker-host ifconfig
+
+docker0   Link encap:Ethernet  HWaddr 02:42:40:10:db:61  
+          inet addr:172.17.0.1  Bcast:172.17.255.255  Mask:255.255.0.0
+          UP BROADCAST MULTICAST  MTU:1500  Metric:1
+          RX packets:0 errors:0 dropped:0 overruns:0 frame:0
+          TX packets:0 errors:0 dropped:0 overruns:0 carrier:0
+          collisions:0 txqueuelen:0
+          RX bytes:0 (0.0 B)  TX bytes:0 (0.0 B)
+
+ens4      Link encap:Ethernet  HWaddr 42:01:0a:84:00:14  
+          inet addr:10.132.0.20  Bcast:10.132.0.20  Mask:255.255.255.255
+          inet6 addr: fe80::4001:aff:fe84:14/64 Scope:Link
+          UP BROADCAST RUNNING MULTICAST  MTU:1460  Metric:1
+          RX packets:5073 errors:0 dropped:0 overruns:0 frame:0
+          TX packets:4043 errors:0 dropped:0 overruns:0 carrier:0
+          collisions:0 txqueuelen:1000
+          RX bytes:108589111 (108.5 MB)  TX bytes:406354 (406.3 KB)
+
+lo        Link encap:Local Loopback  
+          inet addr:127.0.0.1  Mask:255.0.0.0
+          inet6 addr: ::1/128 Scope:Host
+          UP LOOPBACK RUNNING  MTU:65536  Metric:1
+          RX packets:0 errors:0 dropped:0 overruns:0 frame:0
+          TX packets:0 errors:0 dropped:0 overruns:0 carrier:0
+          collisions:0 txqueuelen:1000
+          RX bytes:0 (0.0 B)  TX bytes:0 (0.0 B)
+```
+
+Запустим несколько раз (2-4)
+
+```
+docker run --network host -d nginx
+
+docker ps
+CONTAINER ID        IMAGE               COMMAND                  CREATED             STATUS              PORTS               NAMES
+4d877e0422d9        nginx               "nginx -g 'daemon of…"   48 seconds ago      Up 45 seconds                           fervent_nash
+
+docker ps -a
+CONTAINER ID        IMAGE               COMMAND                  CREATED              STATUS                          PORTS               NAMES
+dc9911e01a6a        nginx               "nginx -g 'daemon of…"   About a minute ago   Exited (1) About a minute ago                       stoic_tereshkova
+f403f8e20bbe        nginx               "nginx -g 'daemon of…"   About a minute ago   Exited (1) About a minute ago                       determined_nobel
+4d877e0422d9        nginx               "nginx -g 'daemon of…"   About a minute ago   Up About a minute                                   fervent_nash
+```
+
+При повторных выполениях команды видно, что в работе остается только один контейнер с nginx, так как при работе с host network driver невозможно задействовать один и тот же порт nginx всеми контейнерами одновременно
+
+docker kill $(docker ps -q)
+
+#### Docker networks
+
+На docker-host машине выполним команду: sudo ln -s /var/run/docker/netns /var/run/netns
+
+Теперь мы можем просматривать существующие в данный момент net-namespaces с помощью команды: sudo ip netns
+
+Повторим запуски контейнеров с использованием драйверов none и host и посмотрим, как меняется список namespace-ов
+
+```
+eb4bdda43b65
+default
+```
+
+ip netns exec <namespace> <command> - позволит выполнять команды в выбранном namespace: sudo ip netns exec eb4bdda43b65 ifconfig
+
+#### Bridge network driver
+
+Создадим bridge-сеть в docker (флаг --driver указывать не обязательно, т.к. по-умолчанию используется bridge)
+
+docker network create reddit --driver bridge
+
+Запустим наш проект reddit с использованием bridge-сети
+
+```
+docker run -d --network=reddit mongo:latest
+docker run -d --network=reddit kovtalex/post:3.0
+docker run -d --network=reddit kovtalex/comment:3.0
+docker run -d --network=reddit -p 9292:9292 kovtalex/ui:3.0
+```
+
+Сервис не заработает. Тогда решением проблемы будет присвоение контейнерам имен или сетевых алиасов при старте:
+
+```
+--name <name> (можно задать только 1 имя)
+--network-alias <alias-name> (можно задать множество алиасов)
+```
+
+```
+docker kill $(docker ps -q)
+docker run -d --network=reddit --network-alias=post_db --network-alias=comment_db mongo:latest
+docker run -d --network=reddit --network-alias=post kovtalex/post:3.0
+docker run -d --network=reddit --network-alias=comment kovtalex/comment:3.0
+docker run -d --network=reddit -p 9292:9292 kovtalex/ui:3.0
+```
+
+Теперь сервис работает!
+
+Далее запустим наш проект в 2-х bridge сетях. Так , чтобы сервис ui не имел доступа к базе данных
+
+```
+docker kill $(docker ps -q)
+
+docker network create back_net --subnet=10.0.2.0/24
+docker network create front_net --subnet=10.0.1.0/24
+
+docker run -d --network=front_net -p 9292:9292 --name ui kovtalex/ui:3.0
+docker run -d --network=back_net --name comment kovtalex/comment:3.0
+docker run -d --network=back_net --name post kovtalex/post:3.0
+docker run -d --network=back_net --name mongo_db --network-alias=post_db --network-alias=comment_db mongo:latest
+
+docker network connect front_net post
+docker network connect front_net comment
+```
+
+Теперь давайте посмотрим как выглядит сетевой стек Linux в текущий момент
+
+```
+docker-machine ssh docker-host
+sudo apt-get update && sudo apt-get install bridge-utils
+
+sudo docker network ls
+NETWORK ID          NAME                DRIVER              SCOPE
+7af5f06d2dcf        front_net           bridge              local
+f21294d0f6b1        back_net            bridge              local
+
+ifconfig | grep br
+br-7af5f06d2dcf Link encap:Ethernet  HWaddr 02:42:85:5b:e9:06  
+br-f21294d0f6b1 Link encap:Ethernet  HWaddr 02:42:74:7d:78:98  
+
+brctl show br-7af5f06d2dcf
+bridge name     bridge id               STP enabled     interfaces
+br-7af5f06d2dcf         8000.0242855be906       no      veth6a9774a
+                                                        veth75576e0
+                                                        vethfc21e18
+brctl show br-f21294d0f6b1
+bridge name     bridge id               STP enabled     interfaces
+br-f21294d0f6b1         8000.0242747d7898       no      vethd6d46a0
+                                                        vethdd9f4f2
+                                                        vethfffcad1
+
+Отображаемые veth-интерфейсы - это те части виртуальных пар интерфейсов, которые лежат в сетевом пространстве хоста и также отображаются в ifconfig. Вторые их части лежат внутри контейнеров
+
+sudo iptables -nL -t nat
+
+Правила ниже отвечают за выпуск во внешнюю сеть контейнеров из bridge-сетей
+Chain POSTROUTING (policy ACCEPT)
+target     prot opt source               destination
+MASQUERADE  all  --  10.0.1.0/24          0.0.0.0/0
+MASQUERADE  all  --  10.0.2.0/24          0.0.0.0/0
+MASQUERADE  all  --  172.18.0.0/16        0.0.0.0/0
+MASQUERADE  all  --  172.17.0.0/16        0.0.0.0/0
+
+Строка ниже отвечает за перенаправление трафика на адреса уже конкретных контейнеров
+DNAT       tcp  --  0.0.0.0/0            0.0.0.0/0            tcp dpt:9292 to:10.0.1.2:9292
+
+ps ax | grep docker-proxy
+15933 ?        Sl     0:00 /usr/bin/docker-proxy -proto tcp -host-ip 0.0.0.0 -host-port 9292 -container-ip 10.0.1.2 -container-port 9292
+22290 pts/1    S+     0:00 grep --color=auto docker-proxy
+
+Мы можем увидеть хотя бы 1 запущенный процесс docker-proxy. Этот процесс в данный момент слушает сетевой tcp-порт 9292
+```
+
+### Docker-compose
+
+Установка: pip install docker-compose
+
+Создадим docker-compose.yml и выполним
+
+```
+docker kill $(docker ps -q)
+export USRNAME=kovtalex
+docker-compose up -d
+
+docker-compose ps
+    Name                  Command             State           Ports
+----------------------------------------------------------------------------
+src_comment_1   puma                          Up
+src_post_1      python3 post_app.py           Up
+src_post_db_1   docker-entrypoint.sh mongod   Up      27017/tcp
+src_ui_1        puma                          Up      0.0.0.0:9292->9292/tcp
+```
+
+Далее
+
+- изменить docker-compose под кейс с множеством сетей, сетевых алиасов
+- параметиризуем с помощью переменных окружений: порт публикации сервиса ui, версии сервисов и другие параметры
+- параметризованные параметры запишем в отдельный файл c расширением .env
+- docker-compose будет подхватить переменные из этого файла автоматически
+
+Базовое имя проекта в нашем случае формируется из имени родительской папки
+
+Изменим базовое имя проекта, к примеру записав переменную в .env: COMPOSE_PROJECT_NAME=reddit
+
+В итоге наш docker-compose.yml будет выглядеть так
+
+```
+version: '3.3'
+services:
+  mongo_db:
+    image: mongo:${DB_VER}
+    volumes:
+      - mongo_db:/data/db
+    networks:
+      back_net:
+        aliases:
+          - comment_db
+          - post_db
+  ui:
+    build: ./ui
+    image: ${USRNAME}/ui:${UI_VER}
+    ports:
+      - ${UI_PORT}:${APP_PORT}/tcp
+    networks:
+      front_net:
+          aliases:
+            - ui
+  post:
+    build: ./post-py
+    image: ${USRNAME}/post:${POST_VER}
+    networks:
+      front_net:
+        aliases:
+          - post
+      back_net:
+
+  comment:
+    build: ./comment
+    image: ${USRNAME}/comment:${COMMENT_VER}
+    networks:
+      front_net:
+        aliases:
+          - comment
+      back_net:
+
+
+volumes:
+  mongo_db:
+
+networks:
+  back_net:
+  front_net:
+```
+
+### Задание со *
+
+Создадим docker-compose.override.yml для reddit проекта, который позволит
+
+- изменять код каждого из приложений, не выполняя сборку образа задействовав volumes
+- добавим команды перезаписи для выполнения puma с флагами --debug -w 2
+
+```
+docker ps
+CONTAINER ID        IMAGE                  COMMAND                  CREATED             STATUS              PORTS                    NAMES
+54ad7a2726d8        mongo:3.2              "docker-entrypoint.s…"   5 minutes ago       Up 5 minutes        27017/tcp                reddit_mongo_db_1
+d5dd525a5e91        kovtalex/comment:3.0   "puma --debug -w 2"      5 minutes ago       Up 5 minutes                                 reddit_comment_1
+cf7cb9809d85        kovtalex/post:3.0      "python3 post_app.py"    5 minutes ago       Up 5 minutes                                 reddit_post_1
+f58fa18fb28e        kovtalex/ui:3.0        "puma --debug -w 2"      5 minutes ago       Up 5 minutes        0.0.0.0:9292->9292/tcp   reddit_ui_1
+```
+
+docker-compose.override.yml
+
+```
+version: '3.3'
+services:
+  ui:
+    command: 'puma --debug -w 2'
+    volumes:
+      - ui:/app
+  post:
+    volumes:
+      - post:/app
+  comment:
+    command: 'puma --debug -w 2'
+    volumes:
+      - comment:/app
+volumes:
+  ui:
+  post:
+  comment:
+```
+
 ## Docker-образы. Микросервисы
 
 Для выполнения ДЗ и проверки Dockerfile воспользуемся линтером: <https://github.com/hadolint/hadolint>
