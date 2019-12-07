@@ -25,6 +25,16 @@ docker-machine ls
 eval $(docker-machine env docker-host)
 ```
 
+Для удаления
+```
+docker-machine rm <имя>
+```
+
+Для переключения на локальный docker
+```
+eval $(docker-machine env --unset)
+```
+
 Скачаем, распакуем и переименуем в src наше приложение: <https://github.com/express42/reddit/archive/microservices.zip>
 
 Теперь наше приложение состоит из трех компонентов:
