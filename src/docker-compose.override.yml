@@ -1,0 +1,17 @@
+version: '3.3'
+services:
+  ui:
+    command: 'puma --debug -w 2'
+    volumes:
+      - ui:/app
+  post:
+    volumes:
+      - post:/app
+  comment:
+    command: 'puma --debug -w 2'
+    volumes:
+      - comment:/app
+volumes:
+  ui:
+  post:
+  comment:
