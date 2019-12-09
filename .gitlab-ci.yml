@@ -24,7 +24,7 @@ test_unit_job:
   services:
     - mongo:latest 
   script:
-    -  ruby simpletest.rb
+    - ruby simpletest.rb
 
 test_integration_job:
   stage: test
@@ -39,7 +39,6 @@ deploy_dev_job:
     name: dev
     url: https://dev.example.com
 
-
 branch review:
   stage: review
   script: echo "Deploy to $CI_ENVIRONMENT_SLUG"
@@ -50,7 +49,6 @@ branch review:
     - branches
   except:
     - master 
-
 
 staging:
   stage: stage
