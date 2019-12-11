@@ -20,7 +20,7 @@ build_job:
     - echo 'Building'
     - echo "{\"auths\":{\"$CI_REGISTRY\":{\"auth\":\"$CI_REGISTRY_BASE64\"}}}"
     - echo "{\"auths\":{\"$CI_REGISTRY\":{\"auth\":\"$CI_REGISTRY_BASE64\"}}}" > /kaniko/.docker/config.json
-    - /kaniko/executor --context $CI_PROJECT_DIR/reddit --dockerfile $CI_PROJECT_DIR/reddit/Dockerfile --destination reddit:1.0
+    - /kaniko/executor --context $CI_PROJECT_DIR/reddit --dockerfile $CI_PROJECT_DIR/reddit/Dockerfile --destination kovtalex/reddit:1.0
 
 test_unit_job:
   stage: test
