@@ -7,7 +7,7 @@ COPY . $APP_HOME
 RUN bundle install
 
 ENV SERVER_IP 127.0.0.1
-ENV REPO_NAME kovtalex/reddit-app
+ENV REPO_NAME kovtalex/reddit
 ENV DEPLOY_USER deploy
 
-CMD ["bundle exec cap production deploy:initial"]
+CMD ["bundle", "exec", "cap", "production", "deploy:initial"]

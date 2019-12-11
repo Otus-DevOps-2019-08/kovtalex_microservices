@@ -43,7 +43,7 @@ deploy_dev_job:
     - echo $GCLOUD_SERVICE_KEY | gcloud auth activate-service-account --key-file=-
     - gcloud --quiet config set project docker-258208
     - gcloud --quiet config set compute/zone europe-west1-b
-    - gcloud projects list
+    - gcloud compute ssh docker-host --zone=europe-west1-b  --force-key-file-overwrite --command="docker run -d -p 9292:9292 kovtalex/reddit"
   environment:
     name: dev
     url: https://dev.example.com
