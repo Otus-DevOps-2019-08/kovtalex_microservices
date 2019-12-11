@@ -45,7 +45,7 @@ deploy_dev_job:
     - echo $GCLOUD_SERVICE_KEY | gcloud auth activate-service-account --key-file=-
     - gcloud --quiet config set project $GOOGLE_PROJECT_ID
     - gcloud --quiet config set compute/zone $GOOGLE_COMPUTE_ZONE
-    - gcloud compute ssh docker-host --zone=$GOOGLE_COMPUTE_ZONE  --force-key-file-overwrite --command="docker run -d -t -p 9292:9292 kovtalex/reddit:$CI_COMMIT_TAG"
+    - gcloud compute ssh docker-host --zone=$GOOGLE_COMPUTE_ZONE  --force-key-file-overwrite --command="docker run -d -p 9292:9292 kovtalex/reddit:$CI_COMMIT_TAG"
   environment:
     name: dev
     url: https://dev.example.com
