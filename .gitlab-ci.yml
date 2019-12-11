@@ -8,10 +8,18 @@ stages:
 variables:
  DATABASE_URL: 'mongodb://mongo/user_posts'
 
+before_script:
+  - cd reddit
+
 build_job:
   stage: build
+  image:
+    name: gcr.io/kaniko-project/executor:debug
+    entrypoint: [""]
   script:
     - echo 'Building'
+    - echo "{\"auths\":{\"$CI_REGISTRY\":{\"username\":\"$CI_REGISTRY_USER\",\"password\":\"$CI_REGISTRY_PASSWORD\"}}}" > /kaniko/.docker/config.json
+    - /kaniko/executor --context $CI_PROJECT_DIR --dockerfile $CI_PROJECT_DIR/Dockerfile --no-push
 
 test_unit_job:
   stage: test
@@ -19,7 +27,6 @@ test_unit_job:
   services:
     - mongo:latest 
   script:
-    - cd reddit
     - bundle install   
     - ruby simpletest.rb
 
