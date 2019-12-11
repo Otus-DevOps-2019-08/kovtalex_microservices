@@ -18,8 +18,8 @@ build_job:
     entrypoint: [""]
   script:
     - echo 'Building'
-    - echo "{\"auths\":{\"$CI_REGISTRY\":{\"username\":\"$CI_REGISTRY_USER\",\"password\":\"$CI_REGISTRY_PASSWORD\"}}}" > /kaniko/.docker/config.json
-    - /kaniko/executor --context $CI_PROJECT_DIR/reddit --dockerfile $CI_PROJECT_DIR/reddit/Dockerfile --destination $CI_REGISTRY_IMAGE
+    - echo "{\"auths\":{\"$CI_REGISTRY\":{\"auth\":\"$CI_REGISTRY_BASE64\"}}}" > /kaniko/.docker/config.json
+    - /kaniko/executor --context $CI_PROJECT_DIR/reddit --dockerfile $CI_PROJECT_DIR/reddit/Dockerfile --destination reddit
 
 test_unit_job:
   stage: test
