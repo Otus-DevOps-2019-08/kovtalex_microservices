@@ -21,7 +21,7 @@ build_job:
     - echo $CI_PROJECT_DIR
     - pwd
     - echo "{\"auths\":{\"$CI_REGISTRY\":{\"username\":\"$CI_REGISTRY_USER\",\"password\":\"$CI_REGISTRY_PASSWORD\"}}}" > /kaniko/.docker/config.json
-    - /kaniko/executor --context $CI_PROJECT_DIR --dockerfile $CI_PROJECT_DIR/Dockerfile --no-push
+    - /kaniko/executor --context $CI_PROJECT_DIR/reddit --dockerfile $CI_PROJECT_DIR/reddit/Dockerfile --no-push
 
 test_unit_job:
   stage: test
