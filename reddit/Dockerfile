@@ -13,4 +13,4 @@ RUN cd /reddit && bundle install
 RUN ls -la
 RUN chmod 0777 /reddit/start.sh
 
-CMD ["sh start.sh"]
+ENTRYPOINT ["sh", "start.sh"]
