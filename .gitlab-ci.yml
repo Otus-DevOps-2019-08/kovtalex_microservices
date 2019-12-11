@@ -37,16 +37,13 @@ test_integration_job:
 
 deploy_dev_job:
   stage: review
-  image: ubuntu:16.04  
+  image: google/cloud-sdk
   script:
     - echo 'Deploy'
-    - apt-get install openssh-server -y    
-    - ssh-keygen -t rsa -f ~/.ssh/google_compute_engine -C google_compute_engine -P ""
-    - echo $SERVICE_ACCOUNT > /tmp/$CI_PIPELINE_ID.json
-    - export GOOGLE_PROJECT=docker-258208
-    - gcloud auth activate-service-account --key-file /tmp/$CI_PIPELINE_ID.json
-    - gcloud compute ssh docker-host --zone=europe-west1-b --command="ps"
-    - rm /tmp/$CI_PIPELINE_ID.json    
+    - echo $GCLOUD_SERVICE_KEY | gcloud auth activate-service-account --key-file=- \
+        gcloud --quiet config set project docker-258208 \
+        gcloud --quiet config set compute/zone europe-west1-b
+    - gcloud projects list
   environment:
     name: dev
     url: https://dev.example.com
