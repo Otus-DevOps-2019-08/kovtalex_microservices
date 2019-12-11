@@ -40,9 +40,9 @@ deploy_dev_job:
   image: google/cloud-sdk
   script:
     - echo 'Deploy'
-    - echo $GCLOUD_SERVICE_KEY | gcloud auth activate-service-account --key-file=- \
-        gcloud --quiet config set project docker-258208 \
-        gcloud --quiet config set compute/zone europe-west1-b
+    - echo $GCLOUD_SERVICE_KEY | gcloud auth activate-service-account --key-file=-
+    - gcloud --quiet config set project docker-258208
+    - gcloud --quiet config set compute/zone europe-west1-b
     - gcloud projects list
   environment:
     name: dev
