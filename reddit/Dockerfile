@@ -4,10 +4,10 @@ RUN apk add --no-cache build-base=0.5-r1 && gem install bundler:1.17.3 --no-docu
 
 WORKDIR $APP_HOME
 COPY . $APP_HOME
-RUN bundle install
+RUN cd /$APP_HOME && bundle install
 
 ENV SERVER_IP 127.0.0.1
 ENV REPO_NAME kovtalex/reddit
 ENV DEPLOY_USER deploy
 
-CMD ["bundle", "exec", "cap", "production", "deploy:initial"]
+CMD ["bundle exec cap production deploy:initial"]
