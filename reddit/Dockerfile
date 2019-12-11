@@ -14,4 +14,4 @@ RUN cd /reddit && bundle install
 RUN /usr/bin/mongod --fork --logpath /var/log/mongod.log --config /etc/mongodb.conf
 RUN ls -la
 
-CMD ["cd /reddit && puma || exit"]
+CMD ["puma || exit"]

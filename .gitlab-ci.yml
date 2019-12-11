@@ -21,7 +21,7 @@ build_job:
   script:
     - echo 'Building'
     - echo "{\"auths\":{\"$CI_REGISTRY\":{\"auth\":\"$CI_REGISTRY_BASE64\"}}}" > /kaniko/.docker/config.json
-    - /kaniko/executor --context $CI_PROJECT_DIR/${PWD##*/} --dockerfile $CI_PROJECT_DIR/${PWD##*/}/Dockerfile --destination $CI_REGISTRY_IMAGE
+    - /kaniko/executor --context $CI_PROJECT_DIR/${PWD##*/} --dockerfile $CI_PROJECT_DIR/${PWD##*/}/Dockerfile --destination $CI_REGISTRY_IMAGE:$CI_COMMIT_TAG
 
 test_unit_job:
   stage: test
@@ -45,7 +45,7 @@ deploy_dev_job:
     - echo $GCLOUD_SERVICE_KEY | gcloud auth activate-service-account --key-file=-
     - gcloud --quiet config set project $GOOGLE_PROJECT_ID
     - gcloud --quiet config set compute/zone $GOOGLE_COMPUTE_ZONE
-    - gcloud compute ssh docker-host --zone=$GOOGLE_COMPUTE_ZONE  --force-key-file-overwrite --command="docker run -d -p 9292:9292 kovtalex/reddit"
+    - gcloud compute ssh docker-host --zone=$GOOGLE_COMPUTE_ZONE  --force-key-file-overwrite --command="docker run -d -t -p 9292:9292 kovtalex/reddit:$CI_COMMIT_TAG"
   environment:
     name: dev
     url: https://dev.example.com
