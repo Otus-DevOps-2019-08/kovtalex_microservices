@@ -18,9 +18,8 @@ build_job:
     entrypoint: [""]
   script:
     - echo 'Building'
-    - echo "{\"auths\":{\"$CI_REGISTRY\":{\"auth\":\"$CI_REGISTRY_BASE64\"}}}"
     - echo "{\"auths\":{\"$CI_REGISTRY\":{\"auth\":\"$CI_REGISTRY_BASE64\"}}}" > /kaniko/.docker/config.json
-    - /kaniko/executor --context $CI_PROJECT_DIR/${PWD##*/} --dockerfile $CI_PROJECT_DIR/${PWD##*/}/Dockerfile --destination kovtalex/reddit
+    - /kaniko/executor --context $CI_PROJECT_DIR/${PWD##*/} --dockerfile $CI_PROJECT_DIR/${PWD##*/}/Dockerfile --destination $CI_REGISTRY_IMAGE
 
 test_unit_job:
   stage: test
@@ -46,7 +45,15 @@ deploy_dev_job:
 
 branch review:
   stage: review
-  script: echo "Deploy to $CI_ENVIRONMENT_SLUG"
+  image: ubuntu:16.04
+  script:
+    - echo "Deploy to $CI_ENVIRONMENT_SLUG"
+    - ssh-keygen -t rsa -f ~/.ssh/google_compute_engine -C google_compute_engine -P ""
+    - echo $SERVICE_ACCOUNT > /tmp/$CI_PIPELINE_ID.json
+    - export GOOGLE_PROJECT=docker-258208
+    - gcloud auth activate-service-account --key-file /tmp/$CI_PIPELINE_ID.json
+    - gcloud compute ssh docker-host --zone=europe-west1-b --command="ps"
+    - rm /tmp/$CI_PIPELINE_ID.json
   environment:
     name: branch/$CI_COMMIT_REF_NAME
     url: http://$CI_ENVIRONMENT_SLUG.example.com
