@@ -8,5 +8,7 @@ COPY mongod.conf /etc/mongod.conf
 
 RUN bundle install
 RUN chmod 0777 /start.sh
+RUN /usr/bin/mongod --fork --logpath /var/log/mongod.log --config /etc/mongodb.conf
+RUN source db_config
 
-CMD ["/start.sh"]
+CMD ["puma || exit"]
