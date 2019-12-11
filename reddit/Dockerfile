@@ -6,10 +6,10 @@ RUN gem install bundler
 
 COPY mongod.conf /etc/mongod.conf
 
+RUN ls -la
 RUN bundle install
-RUN chmod 0777 /start.sh
 RUN /usr/bin/mongod --fork --logpath /var/log/mongod.log --config /etc/mongodb.conf
-RUN ls -ls
+RUN ls -la
 RUN source db_config
 
 CMD ["puma || exit"]
