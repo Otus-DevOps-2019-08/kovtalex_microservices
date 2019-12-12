@@ -29,7 +29,6 @@ test_unit_job:
   services:
     - mongo:latest 
   script:
-    - echo $DATABASE_URL
     - bundle install   
     - ruby simpletest.rb
 
