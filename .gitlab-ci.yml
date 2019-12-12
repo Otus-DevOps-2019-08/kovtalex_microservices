@@ -54,6 +54,7 @@ deploy_dev_job:
 
 stop_dev_job:
   stage: review
+  image: google/cloud-sdk
   variables:
     GIT_STRATEGY: none
   script:
