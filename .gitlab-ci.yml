@@ -29,6 +29,7 @@ test_unit_job:
   services:
     - mongo:latest 
   script:
+    - echo $DATABASE_URL
     - bundle install   
     - ruby simpletest.rb
 
@@ -45,8 +46,7 @@ deploy_dev_job:
     - echo $GCLOUD_SERVICE_KEY | gcloud auth activate-service-account --key-file=-
     - gcloud --quiet config set project $GOOGLE_PROJECT_ID
     - gcloud --quiet config set compute/zone $GOOGLE_COMPUTE_ZONE
-    - echo $CI_COMMIT_TAG
-    - gcloud compute ssh docker-host --force-key-file-overwrite --command="docker run --rm -d -p 9292:9292 kovtalex/reddit"
+    - gcloud compute ssh docker-host --force-key-file-overwrite --command="docker run --rm -d --name reddit -p 9292:9292 kovtalex/reddit"
   environment:
     name: dev
     url: http://35.233.123.235:9292

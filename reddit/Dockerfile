@@ -10,7 +10,6 @@ COPY . /reddit
 COPY mongod.conf /etc/mongod.conf
 
 RUN cd /reddit && bundle install
-RUN ls -la
-RUN chmod 0777 /reddit/start.sh
+RUN chmod 0777 start.sh
 
 ENTRYPOINT ["sh", "start.sh"]
