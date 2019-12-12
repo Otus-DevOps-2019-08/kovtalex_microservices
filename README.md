@@ -2,6 +2,397 @@
 
 [![Build Status](https://travis-ci.com/Otus-DevOps-2019-08/kovtalex_microservices.svg?branch=master)](https://travis-ci.com/Otus-DevOps-2019-08/kovtalex_microservices)
 
+## Устройство Gitlab CI. Построение процесса непрерывной поставки
+
+### Инсталляция Gitlab CI
+
+CI-сервис является одним из ключевых инфраструктурных сервисов в процессе выпуска ПО и к его доступности, бесперебойной работе и безопасности должны предъявляться повышенные требования
+
+Gitlab CI состоит из множества компонент и выполняет ресурсозатратную работу, например, компиляция приложений
+
+Нам потребуется создать в Google Cloud новую виртуальную машину со следующими параметрами:
+
+- 1 CPU
+- 3.75GB RAM
+- 50-100 GB HDD
+- Ubuntu 16.04
+
+В официальной документации описаны рекомендуемые характеристики сервера: <https://docs.gitlab.com/ce/install/requirements.html>
+
+Для создания сервера мы можем использовать любой из удобных нам способов:
+
+- Веб-интерфейс облака Google
+- Terraform
+- Утилиту gcloud
+- Docker-machine
+
+Также нужно разрешить подключение по HTTP/HTTPS
+
+Воспользуемся docker-machine для развертывания виртуальной машины и установки docker на хост
+
+```
+docker-machine create --driver google \
+ --google-project docker-258208 \
+ --google-machine-image https://www.googleapis.com/compute/v1/projects/ubuntu-os-cloud/global/images/family/ubuntu-1604-lts \
+ --google-machine-type n1-standard-1 \
+ --google-zone europe-west1-b \
+ --google-disk-size "100" \
+ --google-tags http-server,https-server
+
+eval $(docker-machine env gitlab-ci)
+```
+
+Для запуска Gitlab CI мы будем использовать omnibus-установку, у этого подхода есть как свои плюсы, так и минусы.
+Основной плюс для нас в том, что мы можем быстро запустить сервис и сконцентрироваться на процессе непрерывной поставки.
+Минусом такого типа установки является то, что такую инсталляцию тяжелее эксплуатировать и дорабатывать, но долговременная эксплуатация этого сервиса не входит в наши цели.
+
+Более подробно об этом в документации:
+
+- <https://docs.gitlab.com/omnibus/README.html>
+- <https://docs.gitlab.com/omnibus/docker/README.html>
+
+Если потребуется сделать это руками, а также незабудем установить docker-compose
+
+```
+sudo  curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo apt-key add -
+sudo add-apt-repository "deb https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable"
+sudo apt-get update
+sudo apt-get install docker-ce docker-compose -y
+sudo mkdir -p /srv/gitlab/config /srv/gitlab/data /srv/gitlab/logs
+cd /srv/gitlab/
+sudo touch docker-compose.yml
+```
+
+docker-compose.yml
+
+```
+web:
+  image: 'gitlab/gitlab-ce:latest'
+  restart: always
+  hostname: 'gitlab.example.com'
+  environment:
+    GITLAB_OMNIBUS_CONFIG: |
+      external_url 'http://35.214.222.73'
+  ports:
+    - '80:80'
+    - '443:443'
+    - '2222:22'
+  volumes:
+    - '/srv/gitlab/config:/etc/gitlab'
+    - '/srv/gitlab/logs:/var/log/gitlab'
+    - '/srv/gitlab/data:/var/opt/gitlab'
+```
+
+В той же директории, где docker-compose.yml ( /srv/gitlab )
+
+docker-compose up -d
+
+Для первого запуска Gitlab CI необходимо подождать несколько минут, пока он стартует можно почитать, откуда мы взяли содержимое файла docker-compose.yml: <https://docs.gitlab.com/omnibus/docker/README.html#install-gitlab-using-docker-compose>
+
+Если все прошло успешно, то мы можем в браузере перейти на <http://35.214.222.73> и увидеть там страницу смены пароля (логин root)
+
+Далее
+
+- в настройках Gitlab отключаем Sing-up
+- создаем новую группу
+- создаем наш новый проект
+
+### Подготовим репозиторий с кодом приложения
+
+выполняем
+
+```
+git checkout -b gitlab-ci-1
+git remote add gitlab http://34.76.25.244/homework/example.git
+git push gitlab gitlab-ci-1
+```
+
+### Опишем для приложения этапы пайплайна
+
+Теперь мы можем переходить к определению CI/CD Pipeline для проекта
+
+.gitlab-ci.yml
+
+```
+stages:
+  - build
+  - test
+  - deploy
+
+build_job:
+  stage: build
+  script:
+    - echo 'Building'
+
+test_unit_job:
+  stage: test
+  script:
+    - echo 'Testing 1'
+
+test_integration_job:
+  stage: test
+  script:
+    - echo 'Testing 2'
+
+deploy_job:
+  stage: deploy
+  script:
+    - echo 'Deploy'
+```
+
+После чего сохраняем файл
+
+```
+git add .gitlab-ci.yml
+git commit -m 'add pipeline definition'
+git push gitlab gitlab-ci-1
+```
+
+Теперь если перейти в раздел CI/CD мы увидим, что пайплайн готов к запуску.
+Но находится в статусе pending / stuck так как у нас нет runner.
+Запустим Runner и зарегистрируем его в интерактивном режиме.
+
+На сервере, где работает Gitlab CI выполним команду:
+
+```
+docker run -d --name gitlab-runner --restart always \
+-v /srv/gitlab-runner/config:/etc/gitlab-runner \
+-v /var/run/docker.sock:/var/run/docker.sock \
+gitlab/gitlab-runner:latest
+```
+
+После запуска Runner нужно зарегистрировать, это можно сделать командой:
+
+```
+Please enter the gitlab-ci coordinator URL (e.g. https://gitlab.com/):
+http://35.214.222.73/
+Please enter the gitlab-ci token for this runner:
+<TOKEN>
+Please enter the gitlab-ci description for this runner:
+[38689f5588fe]: my-runner
+Please enter the gitlab-ci tags for this runner (comma separated):
+linux,xenial,ubuntu,docker
+Please enter the executor:
+docker
+Please enter the default Docker image (e.g. ruby:2.1):
+alpine:latest
+Runner registered successfully.
+```
+
+После добавления Runner пайплайн должен был запуститься
+
+Добавим исходный код reddit в репозиторий
+
+```
+git clone https://github.com/express42/reddit.git && rm -rf ./reddit/.git
+git add reddit/
+git commit -m “Add reddit app”
+git push gitlab gitlab-ci-1
+```
+
+Изменим описание пайплайна в .gitlab-ci.yml
+
+```
+image: ruby:2.4.2
+stages:
+...
+variables:
+ DATABASE_URL: 'mongodb://mongo/user_posts'
+before_script:
+ - cd reddit
+ - bundle install
+...
+test_unit_job:
+ stage: test
+ services:
+ - mongo:latest
+ script:
+ - ruby simpletest.rb
+...
+...
+```
+
+В описании pipeline мы добавили вызов теста в файле simpletest.rb, нужно создать его в папке reddit
+
+simpletest.rb
+
+```
+require_relative './app'
+require 'test/unit'
+require 'rack/test'
+
+set :environment, :test
+
+class MyAppTest < Test::Unit::TestCase
+  include Rack::Test::Methods
+
+  def app
+    Sinatra::Application
+  end
+
+  def test_get_request
+    get '/'
+    assert last_response.ok?
+  end
+end
+```
+
+Последним шагом нам нужно добавить библиотеку для тестирования в reddit/Gemfile приложения
+
+Добавим gem 'rack-test'
+
+Теперь на каждое изменение в коде приложения будет запущен тест
+
+### Определим окружения
+
+Dev-окружение
+Если на dev мы можем выкатывать последнюю версию кода, то к production окружению это может быть неприменимо, если, конечно, ме не стремимся к continuous deployment.
+
+Staging и Production
+Определим два новых этапа: stage и production, первый будет содержать job имитирующий выкатку на staging окружение, второй на production окружение.
+Определим эти job таким образом, чтобы они запускались с кнопки.
+Обычно, на production окружение выводится приложение с явно зафиксированной версией (например, 2.4.10).
+Добавим в описание pipeline директиву, которая не позволит нам выкатить на staging и production код не помеченный с помощью тэга в git.
+
+Директива only описывает список условий, которые должны быть истинны, чтобы job мог запуститься.
+
+Регулярное выражение  /^\d+\.\d+\.\d+/ означает, что должен стоять semver тэг в git, например, 2.4.10
+
+Изменение, помеченное тэгом в git запустит полный пайплайн
+
+```
+git commit -a -m ‘#4 add logout button to profile page’
+git tag 2.4.10
+git push gitlab gitlab-ci-1 --tags
+```
+
+Динамические окружения
+
+Gitlab CI позволяет определить динамические окружения, это мощная функциональность позволяет вам иметь выделенный стенд для, например, каждой feature-ветки в git
+
+Этот job определяет динамическое окружение для каждой ветки в репозитории, кроме ветки master
+
+```
+branch review:
+  stage: review
+  script: echo "Deploy to $CI_ENVIRONMENT_SLUG"
+  environment:
+  name: branch/$CI_COMMIT_REF_NAME
+  url: http://$CI_ENVIRONMENT_SLUG.example.com
+  only:
+    - branches
+  except:
+    - master
+```
+
+### Задание со *
+
+#### В шаг build добавить сборку контейнера с приложением reddit
+
+Воспользуемся одним из способов сборки, позволящим собирать образы в контейнере и при этом обойтись без Docker: <https://docs.gitlab.com/ee/ci/docker/using_kaniko.html>
+
+В Gitlab определим переменные для сохранения собранного образа в docker hub
+
+- CI_REGISTRY - https://index.docker.io/v1/
+- CI_REGISTRY_BASE64 - вывод команды "echo -n USER:PASSWORD | base64" с данными авторизации к нашему docker hub
+- CI_REGISTRY_IMAGE - kovtalex/reddit
+
+Модифицируем наш .gitlab-ci.yml
+
+```
+build_job:
+  stage: build
+  image:
+    name: gcr.io/kaniko-project/executor:debug
+    entrypoint: [""]
+  script:
+    - echo 'Building'
+    - echo "{\"auths\":{\"$CI_REGISTRY\":{\"auth\":\"$CI_REGISTRY_BASE64\"}}}" > /kaniko/.docker/config.json
+    - /kaniko/executor --context $CI_PROJECT_DIR/${PWD##*/} --dockerfile $CI_PROJECT_DIR/${PWD##*/}/Dockerfile --destination $CI_REGISTRY_IMAGE:$CI_COMMIT_TAG
+```
+
+В результате будет собран образ и залит в Docker Hub
+
+#### Деплой контейнера с reddit на созданный для ветки сервер
+
+Для деплоя и остановка нашего dev окружения с приложением в контейнере воспользуемся Cloud SDK Docker Image
+<https://cloud.google.com/sdk/docs/downloads-docker?refresh=1%29%2C&hl=ru>
+
+- создадим service account на GCP с соответствующей ролью и сгенерируем ключ в формете json
+- в Gitlab определим переменную GCLOUD_SERVICE_KEY и запишем данный ключ
+- определим переменные для зоны GOOGLE_COMPUTE_ZONE и проекта GOOGLE_PROJECT_ID в .gitlab-ci.yml
+
+Модифицируем наш .gitlab-ci.yml
+
+```
+deploy_dev_job:
+  stage: review
+  image: google/cloud-sdk
+  script:
+    - echo 'Deploy'
+    - echo $GCLOUD_SERVICE_KEY | gcloud auth activate-service-account --key-file=-
+    - gcloud --quiet config set project $GOOGLE_PROJECT_ID
+    - gcloud --quiet config set compute/zone $GOOGLE_COMPUTE_ZONE
+    - gcloud compute ssh docker-host --force-key-file-overwrite --command="docker run --rm -d --name reddit -p 9292:9292 kovtalex/reddit\$(if [ ${CI_COMMIT_TAG} ]; then echo \":\"$CI_COMMIT_TAG; fi)"
+  environment:
+    name: dev
+    url: http://35.233.123.235:9292
+    on_stop: stop_dev_job
+
+stop_dev_job:
+  stage: review
+  image: google/cloud-sdk
+  variables:
+    GIT_STRATEGY: none
+  script:
+    - echo "Remove dev env"
+    - echo $GCLOUD_SERVICE_KEY | gcloud auth activate-service-account --key-file=-
+    - gcloud --quiet config set project $GOOGLE_PROJECT_ID
+    - gcloud --quiet config set compute/zone $GOOGLE_COMPUTE_ZONE
+    - gcloud compute ssh docker-host --force-key-file-overwrite --command="docker stop \$(docker container ls -q --filter name=reddit)"
+  when: manual
+  environment:
+    name: dev
+    action: stop
+```
+
+В результате будет развернуто dev окружение с нашим приложением в контейнере на виртуальной машине docker-host в GCP.
+Также в Gitlab предусмотрена кнопка ручной остановки данного окружения и нашего приложения
+
+#### Для автоматизации развертывания и регистрации большого количества Runners был подготовлен скрипт multiple_runners.sh
+
+multiple_runners.sh
+
+```
+#!/bin/bash
+
+# How to run
+# sudo sh multiple_runners.sh <number> <gitlab_url> <gitlab_token>
+
+i=1
+while [ "$i" -le $1 ]; do
+  docker run -d --name gitlab-runner$i --restart always \
+  -v /srv/gitlab-runner$i/config:/etc/gitlab-runner \
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  gitlab/gitlab-runner:latest
+
+  docker exec -it gitlab-runner$i gitlab-runner \
+  register --non-interactive --executor "docker" \
+  --docker-image alpine:latest --url "$2" --registration-token $3 \
+  --description "docker-runner"$i --tag-list "linux,xenial,ubuntu,docker" \
+  --run-untagged="true" --locked="false" --access-level="not_protected"
+  i=$(( i + 1 ))
+done
+```
+
+#### Настройка интеграции Pipeline с текстовым Slack-чатом
+
+Для интеграции был использован материал: <https://docs.gitlab.com/ee/user/project/integrations/slack.html>
+
+Ссылка на канал: <https://devops-team-otus.slack.com/archives/CNET2DVGW>
+
+***
+
 ## Docker: сети, docker-compose
 
 ### Работа с сетями в Docker
@@ -348,6 +739,8 @@ volumes:
   comment:
 ```
 
+***
+
 ## Docker-образы. Микросервисы
 
 Для выполнения ДЗ и проверки Dockerfile воспользуемся линтером: <https://github.com/hadolint/hadolint>
@@ -640,6 +1033,8 @@ kovtalex/comment    3.0                 84bbc760cf18        About an hour ago   
 kovtalex/comment    1.0                 013c2292f299        About an hour ago   770MB
 ```
 
+***
+
 ## Технология контейнеризации. Введение в Docker
 
 ### Знакомство с Docker
@@ -724,8 +1119,6 @@ REPOSITORY                 TAG                 IMAGE ID            CREATED      
 kovtalex/ubuntu-tmp-file   latest              68b5ebc9d2de        14 seconds ago      123MB
 ```
 
-***
-
 ### Docker контейнеры в GCE
 
 - Создаем новый проект <https://console.cloud.google.com/compute> и называем его docker
@@ -765,8 +1158,6 @@ docker-host   -        google   Running   tcp://35.233.48.104:2376           v19
 
 - docker run --rm -ti tehbilly/htop (htop контейнера)
 - docker run --rm --pid host -ti tehbilly/htop (htop хостовой машины)
-
-***
 
 ### Создание своего образа
 
@@ -885,8 +1276,6 @@ reddit-app  default  INGRESS    1000      tcp:9292        False
 
 Открываем ссылку <http://IP:9292> и проверяем работу нашего приложения
 
-***
-
 ### Работа с Docker hub
 
 Docker Hub - это облачный registry сервис от компании Docker. В него можно выгружать и загружать из него докер образы. Docker по умолчанию скачивает образы из докер хаба.
@@ -910,8 +1299,6 @@ docker run --name reddit -d -p 9292:9292 kovtalex/otus-reddit:1.0
 ```
 
 И проверим, что в локальный докер скачался загруженный ранее образ и приложение работает
-
-***
 
 ### Задание со *
 

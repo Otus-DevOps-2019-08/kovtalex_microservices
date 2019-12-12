@@ -1,0 +1,103 @@
+stages:
+  - build
+  - test
+  - review
+  - stage
+  - production
+
+variables:
+  DATABASE_URL: 'mongodb://mongo/user_posts'
+  GOOGLE_PROJECT_ID: docker-258208
+  GOOGLE_COMPUTE_ZONE: europe-west1-b
+
+before_script:
+  - cd reddit
+
+build_job:
+  stage: build
+  image:
+    name: gcr.io/kaniko-project/executor:debug
+    entrypoint: [""]
+  script:
+    - echo 'Building'
+    - echo "{\"auths\":{\"$CI_REGISTRY\":{\"auth\":\"$CI_REGISTRY_BASE64\"}}}" > /kaniko/.docker/config.json
+    - /kaniko/executor --context $CI_PROJECT_DIR/${PWD##*/} --dockerfile $CI_PROJECT_DIR/${PWD##*/}/Dockerfile --destination $CI_REGISTRY_IMAGE:$CI_COMMIT_TAG
+
+test_unit_job:
+  stage: test
+  image: ruby:2.4.2
+  services:
+    - mongo:latest 
+  script:
+    - bundle install   
+    - ruby simpletest.rb
+
+test_integration_job:
+  stage: test
+  script:
+    - echo 'Testing 2'
+
+deploy_dev_job:
+  stage: review
+  image: google/cloud-sdk
+  script:
+    - echo 'Deploy'
+    - echo $GCLOUD_SERVICE_KEY | gcloud auth activate-service-account --key-file=-
+    - gcloud --quiet config set project $GOOGLE_PROJECT_ID
+    - gcloud --quiet config set compute/zone $GOOGLE_COMPUTE_ZONE
+    - gcloud compute ssh docker-host --force-key-file-overwrite --command="docker run --rm -d --name reddit -p 9292:9292 kovtalex/reddit\$(if [ ${CI_COMMIT_TAG} ]; then echo \":\"$CI_COMMIT_TAG; fi)"
+  environment:
+    name: dev
+    url: http://35.233.123.235:9292
+    on_stop: stop_dev_job
+
+stop_dev_job:
+  stage: review
+  image: google/cloud-sdk
+  variables:
+    GIT_STRATEGY: none
+  script:
+    - echo "Remove dev env"
+    - echo $GCLOUD_SERVICE_KEY | gcloud auth activate-service-account --key-file=-
+    - gcloud --quiet config set project $GOOGLE_PROJECT_ID
+    - gcloud --quiet config set compute/zone $GOOGLE_COMPUTE_ZONE
+    - gcloud compute ssh docker-host --force-key-file-overwrite --command="docker stop \$(docker container ls -q --filter name=reddit)"
+  when: manual
+  environment:
+    name: dev
+    action: stop
+
+
+branch review:
+  stage: review
+  script:
+    - echo "Deploy to $CI_ENVIRONMENT_SLUG"
+  environment:
+    name: branch/$CI_COMMIT_REF_NAME
+    url: http://$CI_ENVIRONMENT_SLUG.example.com
+  only:
+    - branches
+  except:
+    - master 
+
+staging:
+  stage: stage
+  when: manual
+  only:
+    - /^\d+\.\d+\.\d+/
+  script:
+    - echo 'Deploy'
+  environment:
+    name: stage
+    url: https://beta.example.com
+
+production:
+  stage: production
+  when: manual
+  only:
+    - /^\d+\.\d+\.\d+/  
+  script:
+    - echo 'Deploy'
+  environment:
+    name: production
+    url: https://example.com
