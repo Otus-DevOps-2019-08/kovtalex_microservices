@@ -2,6 +2,47 @@
 
 [![Build Status](https://travis-ci.com/Otus-DevOps-2019-08/kovtalex_microservices.svg?branch=master)](https://travis-ci.com/Otus-DevOps-2019-08/kovtalex_microservices)
 
+
+gcloud compute firewall-rules create prometheus-default --allow tcp:9090
+gcloud compute firewall-rules create puma-default --allow tcp:9292
+
+export GOOGLE_PROJECT=docker-258208
+
+docker-machine create --driver google \
+ --google-machine-image https://www.googleapis.com/compute/v1/projects/ubuntu-os-cloud/global/images/family/ubuntu-1604-lts \
+ --google-machine-type n1-standard-1 \
+ --google-zone europe-west1-b \
+ docker-host
+
+eval $(docker-machine env docker-host)
+
+docker run --rm -p 9090:9090 -d --name prometheus prom/prometheus:v2.1.0
+
+docker-machine ip docker-host
+
+docker ps
+
+docker stop prometheus
+
+export USER_NAME=kovtalex
+docker build -t $USER_NAME/prometheus .
+
+/src/ui      $ bash docker_build.sh
+/src/post-py $ bash docker_build.sh
+/src/comment $ bash docker_build.sh
+
+for i in ui post-py comment; do cd src/$i; bash docker_build.sh; cd -; done
+
+docker login
+docker push $USER_NAME/ui
+docker push $USER_NAME/comment
+docker push $USER_NAME/post
+docker push $USER_NAME/prometheus
+
+
+
+
+
 ## Устройство Gitlab CI. Построение процесса непрерывной поставки
 
 ### Инсталляция Gitlab CI
@@ -1288,6 +1329,7 @@ Docker Hub - это облачный registry сервис от компании
 
 ```
 docker tag reddit:latest kovtalex/otus-reddit:1.0
+docker push kovtalex/otus-reddit:1.0
 ```
 
 Т.к. теперь наш образ есть в докер хабе, то мы можем запустить его не только в докер хосте в GCP, но и в вашем локальном докере или на другом хосте.
