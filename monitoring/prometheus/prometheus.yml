@@ -22,3 +22,13 @@ scrape_configs:
     static_configs:
       - targets:
         - 'node-exporter:9100'
+
+  - job_name: 'mongodb-exporter'
+    static_configs:
+      - targets:
+        - 'mongodb-exporter:9216'
+
+  - job_name: 'cloudprobe-exporter'
+    static_configs:
+      - targets:
+        - 'cloudprobe-exporter:9313'

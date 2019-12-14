@@ -10,7 +10,7 @@ services:
           - comment_db
           - post_db
   ui:
-    image: ${USRNAME}/ui:${UI_VER}
+    image: ${USER_NAME}/ui:${UI_VER}
     ports:
       - ${UI_PORT}:${APP_PORT}/tcp
     networks:
@@ -18,7 +18,7 @@ services:
         aliases:
           - ui
   post:
-    image: ${USRNAME}/post:${POST_VER}
+    image: ${USER_NAME}/post:${POST_VER}
     networks:
       front_net:
         aliases:
@@ -26,7 +26,7 @@ services:
       back_net:
 
   comment:
-    image: ${USRNAME}/comment:${COMMENT_VER}
+    image: ${USER_NAME}/comment:${COMMENT_VER}
     networks:
       front_net:
         aliases:
@@ -34,7 +34,7 @@ services:
       back_net:
 
   prometheus:
-    image: ${USRNAME}/prometheus:${PROMETHEUS_VER}
+    image: ${USER_NAME}/prometheus:${PROMETHEUS_VER}
     ports:
       - '9090:9090'
     volumes:
@@ -48,7 +48,7 @@ services:
       back_net:
 
   node-exporter:
-    image: prom/node-exporter:v0.15.2
+    image: prom/node-exporter:${NODE_EXPORTER_VER}
     user: root
     volumes:
       - /proc:/host/proc:ro
@@ -60,6 +60,20 @@ services:
       - '--collector.filesystem.ignored-mount-points="^/(sys|proc|dev|host|etc)($$|/)"'
     networks:
       back_net:
+
+  mongodb-exporter:
+    image: kovtalex/mongodb_exporter:${MONGODB_EXPORTER_VER}
+    command:
+      '--mongodb.uri=mongodb://mongo_db:27017'
+    networks:
+      back_net:
+
+  cloudprobe-exporter:
+    image: cloudprober/cloudprober:${CLOUDPROBER_VER}
+    volumes:
+      - /tmp/cloudprober.cfg:/etc/cloudprober.cfg
+    networks:
+      front_net:
 
 volumes:
   mongo_db:
