@@ -27,7 +27,7 @@ test_unit_job:
   stage: test
   image: ruby:2.4.2
   services:
-    - mongo:latest 
+    - mongo:3.2 
   script:
     - bundle install   
     - ruby simpletest.rb
@@ -45,7 +45,7 @@ deploy_dev_job:
     - echo $GCLOUD_SERVICE_KEY | gcloud auth activate-service-account --key-file=-
     - gcloud --quiet config set project $GOOGLE_PROJECT_ID
     - gcloud --quiet config set compute/zone $GOOGLE_COMPUTE_ZONE
-    - gcloud compute ssh docker-host --force-key-file-overwrite --command="docker run --rm -d --name reddit -p 9292:9292 kovtalex/reddit\$(if [ ${CI_COMMIT_TAG} ]; then echo \":\"$CI_COMMIT_TAG; fi)"
+    - gcloud compute ssh docker-host --force-key-file-overwrite --command="docker run --rm -d --name reddit -p 9292:9292 $CI_REGISTRY_IMAGE\$(if [ ${CI_COMMIT_TAG} ]; then echo \":\"$CI_COMMIT_TAG; fi)"
   environment:
     name: dev
     url: http://35.233.123.235:9292

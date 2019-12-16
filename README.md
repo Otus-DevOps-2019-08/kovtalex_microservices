@@ -2,6 +2,333 @@
 
 [![Build Status](https://travis-ci.com/Otus-DevOps-2019-08/kovtalex_microservices.svg?branch=master)](https://travis-ci.com/Otus-DevOps-2019-08/kovtalex_microservices)
 
+## Введение в мониторинг. Системы мониторинга
+
+Мой Docker Hub <https://hub.docker.com/u/kovtalex/>
+
+### Prometheus: запуск, конфигурация, знакомство с Web UI
+
+Создадим правило фаервола для Prometheus и Puma:
+
+```
+gcloud compute firewall-rules create prometheus-default --allow tcp:9090
+gcloud compute firewall-rules create puma-default --allow tcp:9292
+```
+
+Создадим Docker хост в GCE и настроим локальное окружение на работу с ним
+
+```
+export GOOGLE_PROJECT=docker-258208
+
+docker-machine create --driver google \
+ --google-machine-image https://www.googleapis.com/compute/v1/projects/ubuntu-os-cloud/global/images/family/ubuntu-1604-lts \
+ --google-machine-type n1-standard-1 \
+ --google-zone europe-west1-b \
+ docker-host
+
+eval $(docker-machine env docker-host)
+```
+
+Воспользуемся готовым образом с DockerHub
+
+```
+docker run --rm -p 9090:9090 -d --name prometheus prom/prometheus:v2.1.0
+docker ps
+docker-machine ip docker-host
+```
+
+Ознакомимся с работой Prometheus в Web UI
+
+Пример метрики
+
+```
+prometheus_build_info{branch="HEAD",goversion="go1.9.1",instance="localhost:9090", job="prometheus", revision="3a7c51ab70fc7615cd318204d3aa7c078b7c5b20",version="1.8.1"} 1
+```
+
+- название метрики - идентификатор собранной информации.
+- лейбл - добавляет метаданных метрике, уточняет ее.
+Использование лейблов дает нам возможность не ограничиваться лишь одним названием метрик для идентификации получаемой информации.
+Лейблы содержаться в {} скобках и представлены наборами "ключ=значение".
+- значение метрики - численное значение метрики, либо NaN, если значение недоступно.
+
+Остановим контейнер и переупорядочим структуру директорий
+
+docker stop prometheus
+
+Создадим Docker образ и в директории monitoring/prometheus напишем простой конфигурационный файл для сбора метрик с наших микросервисов
+
+prometheus.yml
+
+```
+---
+global:
+  scrape_interval: '5s'
+
+scrape_configs:
+  - job_name: 'prometheus'
+    static_configs:
+      - targets:
+        - 'localhost:9090'
+
+  - job_name: 'ui'
+    static_configs:
+      - targets:
+        - 'ui:9292'
+
+  - job_name: 'comment'
+    static_configs:
+      - targets:
+        - 'comment:9292'
+```
+
+```
+export USER_NAME=kovtalex
+docker build -t $USER_NAME/prometheus .
+```
+
+Выполним сборку образов при помощи скриптов docker_build.sh в директории каждого сервиса
+
+/src/ui      $ bash docker_build.sh
+/src/post-py $ bash docker_build.sh
+/src/comment $ bash docker_build.sh
+
+Или сразу все из корня репозитория
+
+for i in ui post-py comment; do cd src/$i; bash docker_build.sh; cd -; done
+
+Будем поднимать наш Prometheus совместно с микросервисами. Определите в вашем docker/docker-compose.yml файле новый сервис
+
+docker-compose.yml
+
+```
+services:
+...
+  prometheus:
+    image: ${USERNAME}/prometheus
+    ports:
+      - '9090:9090'
+    volumes:
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--storage.tsdb.retention=1d'
+
+volumes:
+  prometheus_data:
+```
+
+Поднимем сервисы, определенные в docker/dockercompose.yml
+
+docker-compose up -d
+
+### Мониторинг состояния микросервисов
+
+Посмотрим список endpoint-ов, с которых собирает информацию Prometheus.
+Endpoint-ы должны быть в состоянии UP.
+
+Healthcheck-и представляют собой проверки того, что наш сервис здоров и работает в ожидаемом режиме. В нашем случае healthcheck выполняется внутри кода микросервиса и выполняет проверку того, что все сервисы, от которых зависит его работа, ему доступны. Если требуемые для его работы сервисы здоровы, то healthcheck проверка возвращает status = 1, что соответсвует тому, что сам сервис здоров. Если один из нужных ему сервисов нездоров или недоступен, то проверка вернет status = 0.
+
+В веб интерфейсе Prometheus выполним поиск по названию метрики ui_health, проверим ее значение и построим график.
+
+Попробуем остановить сервис post на некоторое время и проверим, как изменится статус ui сервиса, который зависим от post
+
+docker-compose stop post
+
+Метрика изменила свое значение на 0, что означает, что UI сервис стал нездоров
+
+Далее вернем в строй наш сервис post
+
+docker-compose start post
+
+### Сбор метрик хоста с использованием экспортера
+
+Экспортер похож на вспомогательного агента для сбора метрик.
+В ситуациях, когда мы не можем реализовать отдачу метрик Prometheus в коде приложения, мы можем использовать экспортер, который будет транслироватьметрики приложения или системы в формате доступном для чтения Prometheus.
+
+Exporters
+
+- Программа, которая делает метрики доступными для сбора Prometheus
+- Дает возможность конвертировать метрики в нужный для Prometheus формат
+- Используется когда нельзя поменять код приложения
+- Примеры: PostgreSQL, RabbitMQ, Nginx, Node exporter, cAdvisor
+
+Воспользуемся Node экспортер для сбора информации о работе Docker хоста (виртуалки, где у нас запущены контейнеры) и предоставлению этой информации в Prometheus
+
+Дополним наш docker-compose.yml
+
+```
+services:
+
+  node-exporter:
+    image: prom/node-exporter:v0.15.2
+    user: root
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/rootfs:ro
+    command:
+      - '--path.procfs=/host/proc'
+      - '--path.sysfs=/host/sys'
+      - '--collector.filesystem.ignored-mount-points="^/(sys|proc|dev|host|etc)($$|/)"'
+```
+
+и prometheus.yml
+
+```
+scrape_configs:
+...
+ - job_name: 'node'
+ static_configs:
+ - targets:
+ - 'node-exporter:9100'
+```
+
+Не забудем собрать новый Docker для Prometheus
+
+```
+docker build -t $USER_NAME/prometheus
+docker-compose down
+docker-compose up -d
+```
+
+В списке endpoint-ов Prometheus - должен появится еще один endpoint
+
+- Зайдем на хост: docker-machine ssh docker-host
+- Добавим нагрузки: yes > /dev/null
+
+Проверим по метрике node_load1 как выросла нагрузка CPU
+
+Запушим собранные нами образы на DockerHub
+
+```
+docker login
+docker push $USER_NAME/ui
+docker push $USER_NAME/comment
+docker push $USER_NAME/post
+docker push $USER_NAME/prometheus
+```
+
+### Задание со *
+
+#### Добавляем мониторинг MongoDB с использованием необходимого экспортера
+
+Для реализации выберем Percona MongoDB Exporter - форкнут из dcu/mongodb_exporter, но при этом свежей версии и обновляемый
+<https://github.com/percona/mongodb_exporter>
+
+Билдим образ по документации и пушим его в наш репозитарий:
+
+```
+sudo docker tag blackbox_exporter kovtalex/mongodb_exporter:0.10.0
+sudo docker push kovtalex/mongodb_exporter:0.10.0
+```
+
+Также правим наш prometheus.yml
+
+```
+  - job_name: 'mongodb-exporter'
+    static_configs:
+      - targets:
+        - 'mongodb-exporter:9216'
+```
+
+И docker-compose.yml
+
+```
+  mongodb-exporter:
+    image: kovtalex/mongodb_exporter:${MONGODB_EXPORTER_VER}
+    command:
+      '--mongodb.uri=mongodb://mongo_db:27017'
+    networks:
+      back_net:
+```
+
+Проверяем метрики связанные с mongodb в нашем Prometheus
+
+#### Добавляем в Prometheus мониторинг сервисов comment, post, ui с помощью blackbox экспортера
+
+Выберем Cloudprober от Google <https://github.com/google/cloudprober>
+
+Будем мониторить по HTTP:
+
+- ui ожидая ответа 200-299 по порту 9292
+- comment по порту 9292
+- post по порту 5000
+
+Напишем наш cloudprober.cfg и закинем его в /tmp на docker-host, т.к. docker-compose будем искать его именно там для передачи в контейнер
+
+```
+probe {
+    name: "ui-http"
+    type: HTTP
+    targets {
+        host_names: "ui"
+    }
+    interval_msec: 5000
+    timeout_msec: 1000
+    http_probe {
+        port: 9292
+    }
+    validator {
+        name: "status_code_2xx"
+        http_validator {
+            success_status_codes: "200-299"
+        }
+    }
+}
+probe {
+    name: "comment-http"
+    type: HTTP
+    targets {
+        host_names: "comment"
+    }
+    interval_msec: 5000
+    timeout_msec: 1000
+    http_probe {
+        port: 9292
+    }
+}
+probe {
+    name: "post-http"
+    type: HTTP
+    targets {
+        host_names: "post"
+    }
+    interval_msec: 5000
+    timeout_msec: 1000
+    http_probe {
+        port: 5000
+    }
+}
+```
+
+Также правим наш prometheus.yml
+
+```
+  - job_name: 'cloudprobe-exporter'
+    static_configs:
+      - targets:
+        - 'cloudprobe-exporter:9313'
+```
+
+И docker-compose.yml
+
+```
+  cloudprobe-exporter:
+    image: cloudprober/cloudprober:${CLOUDPROBER_VER}
+    volumes:
+      - /tmp/cloudprober.cfg:/etc/cloudprober.cfg
+    networks:
+      front_net:
+```
+
+В результате в нашем Prometheus будут доступны метрики: (total, succes, latency) для наших микросервисов, (validation_failure) для ui и другие
+
+#### Напишем Makefile, который в минимальном варианте умеет
+
+- собирать все образы, которые сейчас используются
+- пушить их в докер хаб
+
 ## Устройство Gitlab CI. Построение процесса непрерывной поставки
 
 ### Инсталляция Gitlab CI
@@ -1288,6 +1615,7 @@ Docker Hub - это облачный registry сервис от компании
 
 ```
 docker tag reddit:latest kovtalex/otus-reddit:1.0
+docker push kovtalex/otus-reddit:1.0
 ```
 
 Т.к. теперь наш образ есть в докер хабе, то мы можем запустить его не только в докер хосте в GCP, но и в вашем локальном докере или на другом хосте.
