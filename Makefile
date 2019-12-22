@@ -1,15 +1,35 @@
 USERNAME=kovtalex
 
-# Деплоим наше приложение с мониторингом
-deploy_app:
-	cd docker && docker-compose up -d && docker-compose -f docker-compose-monitoring.yml up -d
+# Деплоим всё
+deploy: deploy_app deploy_mon
 
-# Останавливаем работу приложения
+# Деплоим приложение
+deploy_app:
+	cd docker && docker-compose up -d
+
+# Деплоим мониторинг
+deploy_mon:
+	cd docker && docker-compose -f docker-compose-monitoring.yml up -d
+
+# Останавливаем всё
+stop: stop_app stop_mon
+
+# Останавливаем приложение
 stop_app:
-	cd docker && docker-compose down && docker-compose -f docker-compose-monitoring.yml down
+	cd docker && docker-compose down
+
+# Останавливаем мониторинг
+stop_mon:
+	cd docker && docker-compose -f docker-compose-monitoring.yml down
 
 # Билдим всё
-build_all: build_comment build_post build_comment build_prometheus build_alertmanager
+build: build_app build_mon
+
+# Билдим приложение
+build_app: build_comment build_post build_comment
+
+# Билдим мониторинг
+build_mon: build_prometheus build_alertmanager
 
 build_comment:
 	export USER_NAME=$(USERNAME) && cd src/comment && bash docker_build.sh
@@ -20,10 +40,16 @@ build_ui:
 build_prometheus:
 	cd monitoring/prometheus && docker build -t $(USERNAME)/prometheus .
 build_alertmanager:
-	cd monitoring/alertmanager && docker push $USER_NAME/alertmanager .
+	cd monitoring/alertmanager && docker build -t $(USER_NAME)/alertmanager .
 
 # Пушим всё
-push_all: push_comment push_post push_ui push_prometheus push_alertmanager
+push: push_app push_mon
+
+# Пушим приложение
+push_app: push_comment push_post push_ui
+
+# Пушим мониторинг
+push_mon: push_prometheus push_alertmanager
 
 push_comment:
 	docker push $(USERNAME)/comment:latest

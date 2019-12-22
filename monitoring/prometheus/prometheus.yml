@@ -52,3 +52,12 @@ scrape_configs:
     static_configs:
       - targets:
         - 'cadvisor:8080'
+
+  - job_name: 'trickster'
+    static_configs:
+      - targets:
+        - 'trickster:8082'
+
+  - job_name: 'docker'
+    static_configs:
+      - targets: ['docker-host:9323']

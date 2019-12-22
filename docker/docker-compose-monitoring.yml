@@ -43,7 +43,7 @@ services:
       front_net:
 
   cadvisor:
-    image: google/cadvisor:v0.33.0
+    image: google/cadvisor:${CADVISOR_VER}
     volumes:
       - '/:/rootfs:ro'
       - '/var/run:/var/run:rw'
@@ -55,12 +55,12 @@ services:
       back_net:
 
   grafana:
-    image: grafana/grafana:6.5.2
+    image: grafana/grafana:${GRAFANA_VER}
     volumes:
       - grafana_data:/var/lib/grafana
     environment:
       - GF_SECURITY_ADMIN_USER=admin
-      - GF_SECURITY_ADMIN_PASSWORD=secret
+      - GF_SECURITY_ADMIN_PASSWORD=admin
     depends_on:
       - prometheus
     ports:
@@ -69,11 +69,18 @@ services:
       back_net:
 
   alertmanager:
-    image: ${USER_NAME}/alertmanager
+    image: ${USER_NAME}/alertmanager:${ALERTMANAGER_VER}
     command:
       - '--config.file=/etc/alertmanager/config.yml'
     ports:
       - 9093:9093
+    networks:
+      back_net:
+
+  trickster:
+    image: tricksterio/trickster
+    volumes:
+      - /tmp/trickster.conf:/etc/trickster/trickster.conf
     networks:
       back_net:
       
