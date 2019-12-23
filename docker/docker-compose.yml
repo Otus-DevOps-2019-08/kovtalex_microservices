@@ -33,51 +33,8 @@ services:
           - comment
       back_net:
 
-  prometheus:
-    image: ${USER_NAME}/prometheus:${PROMETHEUS_VER}
-    ports:
-      - '9090:9090'
-    volumes:
-      - prometheus_data:/prometheus
-    command:
-      - '--config.file=/etc/prometheus/prometheus.yml'
-      - '--storage.tsdb.path=/prometheus'
-      - '--storage.tsdb.retention=1d'
-    networks:
-      front_net:
-      back_net:
-
-  node-exporter:
-    image: prom/node-exporter:${NODE_EXPORTER_VER}
-    user: root
-    volumes:
-      - /proc:/host/proc:ro
-      - /sys:/host/sys:ro
-      - /:/rootfs:ro
-    command:
-      - '--path.procfs=/host/proc'
-      - '--path.sysfs=/host/sys'
-      - '--collector.filesystem.ignored-mount-points="^/(sys|proc|dev|host|etc)($$|/)"'
-    networks:
-      back_net:
-
-  mongodb-exporter:
-    image: kovtalex/mongodb_exporter:${MONGODB_EXPORTER_VER}
-    command:
-      '--mongodb.uri=mongodb://mongo_db:27017'
-    networks:
-      back_net:
-
-  cloudprobe-exporter:
-    image: cloudprober/cloudprober:${CLOUDPROBER_VER}
-    volumes:
-      - /tmp/cloudprober.cfg:/etc/cloudprober.cfg
-    networks:
-      front_net:
-
 volumes:
   mongo_db:
-  prometheus_data:
 
 networks:
   back_net:
