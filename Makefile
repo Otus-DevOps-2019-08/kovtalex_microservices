@@ -1,4 +1,5 @@
 USERNAME=kovtalex
+APP_TAG=logging
 
 # Деплоим всё
 deploy: deploy_app deploy_mon
@@ -11,6 +12,10 @@ deploy_app:
 deploy_mon:
 	cd docker && docker-compose -f docker-compose-monitoring.yml up -d
 
+# Деплоим логирование
+deploy_log:
+	cd docker && docker-compose -f docker-compose-logging.yml up -d
+
 # Останавливаем всё
 stop: stop_app stop_mon
 
@@ -22,11 +27,15 @@ stop_app:
 stop_mon:
 	cd docker && docker-compose -f docker-compose-monitoring.yml down
 
+# Останавливаем логирование
+stop_log:
+	cd docker && docker-compose -f docker-compose-logging.yml down
+
 # Билдим всё
 build: build_app build_mon
 
 # Билдим приложение
-build_app: build_comment build_post build_comment
+build_app: build_comment build_post build_ui
 
 # Билдим мониторинг
 build_mon: build_prometheus build_alertmanager
@@ -36,11 +45,14 @@ build_comment:
 build_post:
 	export USER_NAME=$(USERNAME) && cd src/post-py && bash docker_build.sh
 build_ui:
-	export USER_NAME=$(USERNAME) && src/ui && bash docker_build.sh
+	export USER_NAME=$(USERNAME) && cd src/ui && bash docker_build.sh
 build_prometheus:
 	cd monitoring/prometheus && docker build -t $(USERNAME)/prometheus .
 build_alertmanager:
 	cd monitoring/alertmanager && docker build -t $(USER_NAME)/alertmanager .
+
+build_log:
+	cd logging/fluentd && docker build -t $(USER_NAME)/fluentd .
 
 # Пушим всё
 push: push_app push_mon
@@ -52,11 +64,11 @@ push_app: push_comment push_post push_ui
 push_mon: push_prometheus push_alertmanager
 
 push_comment:
-	docker push $(USERNAME)/comment:latest
+	docker push $(USERNAME)/comment:$(APP_TAG)
 push_post:
-	docker push $(USERNAME)/post:latest
+	docker push $(USERNAME)/post:$(APP_TAG)
 push_ui:
-	docker push $(USERNAME)/ui:latest
+	docker push $(USERNAME)/ui:$(APP_TAG)
 push_prometheus:
 	docker push $(USERNAME)/prometheus:latest
 push_alertmanager:

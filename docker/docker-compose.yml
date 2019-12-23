@@ -11,14 +11,30 @@ services:
           - post_db
   ui:
     image: ${USER_NAME}/ui:${UI_VER}
+    logging:
+      driver: "fluentd"
+      options:
+        fluentd-address: localhost:24224
+        tag: service.ui
     ports:
       - ${UI_PORT}:${APP_PORT}/tcp
+    environment:
+      - ZIPKIN_ENABLED=${ZIPKIN_ENABLED}
     networks:
       front_net:
         aliases:
           - ui
   post:
     image: ${USER_NAME}/post:${POST_VER}
+    depends_on:
+      - mongo_db
+    logging:
+      driver: "fluentd"
+      options:
+        fluentd-address: localhost:24224
+        tag: service.post
+    environment:
+      - ZIPKIN_ENABLED=${ZIPKIN_ENABLED}
     networks:
       front_net:
         aliases:
@@ -27,6 +43,10 @@ services:
 
   comment:
     image: ${USER_NAME}/comment:${COMMENT_VER}
+    depends_on:
+      - mongo_db
+    environment:
+      - ZIPKIN_ENABLED=${ZIPKIN_ENABLED}
     networks:
       front_net:
         aliases:

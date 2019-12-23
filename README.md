@@ -2,6 +2,35 @@
 
 [![Build Status](https://travis-ci.com/Otus-DevOps-2019-08/kovtalex_microservices.svg?branch=master)](https://travis-ci.com/Otus-DevOps-2019-08/kovtalex_microservices)
 
+
+##
+
+```
+export GOOGLE_PROJECT=docker-258208
+
+docker-machine create --driver google \
+--google-machine-image https://www.googleapis.com/compute/v1/projects/ubuntu-os-cloud/global/images/family/ubuntu-1604-lts  \
+--google-machine-type n1-standard-1 \
+--google-zone europe-west1-b \
+--google-machine-type n1-standard-1 \
+--google-open-port 5601/tcp \
+--google-open-port 9292/tcp \
+--google-open-port 9411/tcp \
+logging
+
+eval $(docker-machine env logging)
+docker-machine ip logging
+```
+
+ERROR: [2] bootstrap checks failed
+[1]: max virtual memory areas vm.max_map_count [65530] is too low, increase to at least [262144]
+[2]: the default discovery settings are unsuitable for production use; at least one of [discovery.seed_hosts, discovery.seed_providers, cluster.initial_master_nodes] must be configured
+
+https://medium.com/@TimvanBaarsen/how-to-run-an-elasticsearch-7-x-single-node-cluster-for-local-development-using-docker-compose-2b7ab73d8b82
+
+sudo sysctl -w vm.max_map_count=262144
+
+
 ## Мониторинг приложения и инфраструктуры
 
 Мой Docker Hub <https://hub.docker.com/u/kovtalex/>
