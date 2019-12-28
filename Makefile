@@ -76,3 +76,21 @@ push_prometheus:
 	docker push $(USERNAME)/prometheus:latest
 push_alertmanager:
 	docker push $(USERNAME)/alertmanager:latest
+
+# Билдим bugged приложение
+build_bugged_app: build_bugged_comment build_bugged_post build_bugged_ui
+
+build_bugged_comment:
+	export USER_NAME=$(USERNAME) && cd bugged-code/comment && bash docker_build.sh
+build_bugged_post:
+	export USER_NAME=$(USERNAME) && cd bugged-code/post-py && bash docker_build.sh
+build_bugged_ui:
+	export USER_NAME=$(USERNAME) && cd bugged-code/ui && bash docker_build.sh
+
+# Деплоим bugged приложение
+deploy_bugged_app:
+	cd docker && docker-compose -f docker-compose-bugged.yml up -d
+
+# Останавливаем bugged приложение
+stop_bugged_app:
+	cd docker && docker-compose -f docker-compose-bugged.yml down

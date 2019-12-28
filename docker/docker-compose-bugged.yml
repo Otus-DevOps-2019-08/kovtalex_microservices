@@ -1,0 +1,73 @@
+version: '3.3'
+services:
+  mongo_db:
+    image: mongo:${DB_VER}
+    volumes:
+      - mongo_db:/data/db
+    networks:
+      back_net:
+        aliases:
+          - comment_db
+          - post_db
+
+  ui:
+    image: ${USER_NAME}/ui:bugged
+    environment:
+      - ZIPKIN_ENABLED=${ZIPKIN_ENABLED}
+      - POST_SERVICE_HOST=post
+      - POST_SERVICE_PORT=5000
+      - COMMENT_SERVICE_HOST=comment
+      - COMMENT_SERVICE_PORT=9292  
+    ports:
+      - ${UI_PORT}:${APP_PORT}/tcp
+    depends_on:
+      - post
+    logging:
+      driver: "fluentd"
+      options:
+        fluentd-address: localhost:24224
+        tag: service.ui
+    networks:
+      front_net:
+        aliases:
+          - ui
+          
+  post:
+    image: ${USER_NAME}/post:bugged
+    environment:
+      - ZIPKIN_ENABLED=${ZIPKIN_ENABLED}
+      - POST_DATABASE_HOST=post_db
+      - POST_DATABASE=posts
+    depends_on:
+      - mongo_db    
+    logging:
+      driver: "fluentd"
+      options:
+        fluentd-address: localhost:24224
+        tag: service.post
+    networks:
+      front_net:
+        aliases:
+          - post
+      back_net:
+
+  comment:
+    image: ${USER_NAME}/comment:bugged
+    depends_on:
+      - mongo_db
+    environment:
+      - ZIPKIN_ENABLED=${ZIPKIN_ENABLED}
+      - COMMENT_DATABASE_HOST=comment_db
+      - COMMENT_DATABASE=comments
+    networks:
+      front_net:
+        aliases:
+          - comment
+      back_net:
+
+volumes:
+  mongo_db:
+
+networks:
+  back_net:
+  front_net:
