@@ -78,7 +78,7 @@ services:
       back_net:
 
   trickster:
-    image: tricksterio/trickster
+    image: tricksterio/trickster:${TRICKSTER_VER}
     volumes:
       - /tmp/trickster.conf:/etc/trickster/trickster.conf
     networks:

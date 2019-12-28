@@ -9,32 +9,42 @@ services:
         aliases:
           - comment_db
           - post_db
+
   ui:
     image: ${USER_NAME}/ui:${UI_VER}
+    environment:
+      - ZIPKIN_ENABLED=${ZIPKIN_ENABLED}
+      - POST_SERVICE_HOST=post
+      - POST_SERVICE_PORT=5000
+      - COMMENT_SERVICE_HOST=comment
+      - COMMENT_SERVICE_PORT=9292  
+    ports:
+      - ${UI_PORT}:${APP_PORT}/tcp
+    depends_on:
+      - post
     logging:
       driver: "fluentd"
       options:
         fluentd-address: localhost:24224
         tag: service.ui
-    ports:
-      - ${UI_PORT}:${APP_PORT}/tcp
-    environment:
-      - ZIPKIN_ENABLED=${ZIPKIN_ENABLED}
     networks:
       front_net:
         aliases:
           - ui
+          
   post:
     image: ${USER_NAME}/post:${POST_VER}
+    environment:
+      - ZIPKIN_ENABLED=${ZIPKIN_ENABLED}
+      - POST_DATABASE_HOST=post_db
+      - POST_DATABASE=posts
     depends_on:
-      - mongo_db
+      - mongo_db    
     logging:
       driver: "fluentd"
       options:
         fluentd-address: localhost:24224
         tag: service.post
-    environment:
-      - ZIPKIN_ENABLED=${ZIPKIN_ENABLED}
     networks:
       front_net:
         aliases:
@@ -47,6 +57,8 @@ services:
       - mongo_db
     environment:
       - ZIPKIN_ENABLED=${ZIPKIN_ENABLED}
+      - COMMENT_DATABASE_HOST=comment_db
+      - COMMENT_DATABASE=comments
     networks:
       front_net:
         aliases:

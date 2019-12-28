@@ -40,6 +40,9 @@ build_app: build_comment build_post build_ui
 # Билдим мониторинг
 build_mon: build_prometheus build_alertmanager
 
+# Билдим логирование
+build_mon: build_log
+
 build_comment:
 	export USER_NAME=$(USERNAME) && cd src/comment && bash docker_build.sh
 build_post:
@@ -50,11 +53,11 @@ build_prometheus:
 	cd monitoring/prometheus && docker build -t $(USERNAME)/prometheus .
 build_alertmanager:
 	cd monitoring/alertmanager && docker build -t $(USER_NAME)/alertmanager .
-
 build_log:
 	cd logging/fluentd && docker build -t $(USER_NAME)/fluentd .
 
 # Пушим всё
+
 push: push_app push_mon
 
 # Пушим приложение
