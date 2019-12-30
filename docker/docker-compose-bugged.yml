@@ -11,7 +11,7 @@ services:
           - post_db
 
   ui:
-    image: ${USER_NAME}/ui:${UI_VER}
+    image: ${USER_NAME}/ui:bugged
     environment:
       - ZIPKIN_ENABLED=${ZIPKIN_ENABLED}
       - POST_SERVICE_HOST=post
@@ -33,7 +33,7 @@ services:
           - ui
           
   post:
-    image: ${USER_NAME}/post:${POST_VER}
+    image: ${USER_NAME}/post:bugged
     environment:
       - ZIPKIN_ENABLED=${ZIPKIN_ENABLED}
       - POST_DATABASE_HOST=post_db
@@ -52,7 +52,7 @@ services:
       back_net:
 
   comment:
-    image: ${USER_NAME}/comment:${COMMENT_VER}
+    image: ${USER_NAME}/comment:bugged
     depends_on:
       - mongo_db
     environment:

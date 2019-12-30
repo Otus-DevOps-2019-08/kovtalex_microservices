@@ -2,6 +2,357 @@
 
 [![Build Status](https://travis-ci.com/Otus-DevOps-2019-08/kovtalex_microservices.svg?branch=master)](https://travis-ci.com/Otus-DevOps-2019-08/kovtalex_microservices)
 
+## Логирование и распределенная трассировка
+
+### Подготовка
+
+- обновим код микросервисов, в который был добавлен функционала логирования <https://github.com/express42/reddit/tree/logging> (git clone -b logging  --single-branch https://github.com/express42/reddit.git)
+- выполним сборку образов при помощи скриптов docker_build.sh в директории каждого сервиса:
+```
+bash docker_build.sh && docker push $USER_NAME/ui
+bash docker_build.sh && docker push $USER_NAME/post
+bash docker_build.sh && docker push $USER_NAME/comment
+```
+- или сразу все из корня репозитория: for i in ui post-py comment; do cd src/$i; bash docker_build.sh; cd -; done
+- или c помощью Makefile: make build_app
+- создадим Docker хост в GCE и настроим локальное окружение на работу с ним, откроем порты файрволла:
+```
+export GOOGLE_PROJECT=docker-258208
+
+docker-machine create --driver google \
+--google-machine-image https://www.googleapis.com/compute/v1/projects/ubuntu-os-cloud/global/images/family/ubuntu-1604-lts  \
+--google-machine-type n1-standard-1 \
+--google-zone europe-west1-b \
+--google-machine-type n1-standard-1 \
+--google-open-port 5601/tcp \
+--google-open-port 9292/tcp \
+--google-open-port 9411/tcp \
+logging
+
+eval $(docker-machine env logging)
+docker-machine ip logging
+```
+
+### Логирование Docker контейнеров
+
+Как упоминалось на лекции хранить все логи стоит централизованно: на одном (нескольких) серверах. В этом ДЗ мы рассмотрим пример системы централизованного логирования на примере Elastic стека (ранее известного как ELK): который включает в себя 3 основных компонента:
+- ElasticSearch (TSDB и поисковый движок для хранения данных)
+- Logstash (для агрегации и трансформации данных)
+- Kibana (для визуализации)
+
+Однако для агрегации логов вместо Logstash мы будем использовать Fluentd, таким образом получая еще одно популярное сочетание этих инструментов, получившее название EFK.
+
+Создадим отдельный compose-файл для нашей системы логирования в папке docker/docker-compose-logging.yml
+
+```
+version: '3'
+services:
+  fluentd:
+    image: ${USERNAME}/fluentd
+    ports:
+      - "24224:24224"
+      - "24224:24224/udp"
+
+  elasticsearch:
+    image: elasticsearch:7.5.0
+    expose:
+      - 9200
+    ports:
+      - "9200:9200"
+
+  kibana:
+    image: kibana:7.5.0
+    ports:
+      - "5601:5601"
+```
+
+Fluentd инструмент, который может использоваться для отправки, агрегации и преобразования лог-сообщений. Мы будем использовать Fluentd для агрегации (сбора в одной месте) и парсинга логов сервисов нашего приложения.
+Создадим образ Fluentd с нужной нам конфигурацией.
+Создадим в проекте microservices директорию logging/fluentd
+В созданной директорий, создадим простой Dockerfile со следущим содержимым:
+
+```
+FROM fluent/fluentd:v0.12
+RUN fluent-gem install fluent-plugin-elasticsearch --no-rdoc --no-ri --version 1.9.5
+RUN fluent-gem install fluent-plugin-grok-parser --no-rdoc --no-ri --version 1.0.0
+ADD fluent.conf /fluentd/etc
+```
+
+В директории logging/fluentd создадим файл конфигурации logging/fluentd/fluent.conf
+
+```
+<source>
+  @type forward
+  port 24224
+  bind 0.0.0.0
+</source>
+
+<match *.**>
+  @type copy
+  <store>
+    @type elasticsearch
+    host elasticsearch
+    port 9200
+    logstash_format true
+    logstash_prefix fluentd
+    logstash_dateformat %Y%m%d
+    include_tag_key true
+    type_name access_log
+    tag_key @log_name
+    flush_interval 1s
+  </store>
+  <store>
+    @type stdout
+  </store>
+</match>
+```
+
+Соберем docker image для fluentd из директории logging/fluentd
+
+docker build -t $USER_NAME/fluentd .
+
+### Структурированные логи
+
+Логи должны иметь заданную (единую) структуру и содержать необходимую для нормальной эксплуатации данного сервиса информацию о его работе.
+Лог-сообщения также должны иметь понятный для выбранной системы логирования формат, чтобы избежать ненужной траты ресурсов на преобразование данных в нужный вид.
+
+Структурированные логи мы рассмотрим на примере сервиса post.
+
+Правим .env файл и меняем теги нашего приложения на logging
+
+Запустим сервисы приложения:
+
+docker-compose up -d
+
+И выполним команду для просмотра логов post сервиса:
+
+docker-compose logs -f post
+
+Откроем приложение в браузере и создадим несколько постов, и пронаблюдаем, как пишутся логи post серсиса в терминале.
+
+Каждое событие, связанное с работой нашего приложения логируется в JSON формате и имеет нужную нам структуру: тип события (event), сообщение (message),переданные функции параметры (params), имя сервиса (service) и др.
+
+По умолчанию Docker контейнерами используется json-file драйвер для логирования информации, которая пишется сервисом внутри контейнера в stdout (и stderr).
+Для отправки логов во Fluentd используем docker драйвер fluentd.
+
+Определим драйвер для логирования для сервиса post внутри compose-файла docker-compose.yml
+
+```
+    logging:
+      driver: "fluentd"
+      options:
+        fluentd-address: localhost:24224
+        tag: service.post
+```
+
+Поднимем инфраструктуру централизованной системы логирования и перезапустим сервисы приложения из каталога docker или с помощью Makefile
+
+```
+docker-compose -f docker-compose-logging.yml up -d
+docker-compose down
+docker-compose up -d
+```
+
+У нас возникла проблема с запуском elasticsearch. Смотрим логи elasticsearch и видим две ошибки, которые нам предстоит исправить:
+
+```
+ERROR: [2] bootstrap checks failed
+[1]: max virtual memory areas vm.max_map_count [65530] is too low, increase to at least [262144]
+[2]: the default discovery settings are unsuitable for production use; at least one of [discovery.seed_hosts, discovery.seed_providers, cluster.initial_master_nodes] must be configured
+```
+
+Немного погуглим и находим ответы
+
+Решение первой: sudo sysctl -w vm.max_map_count=262144
+Решение второй: <https://medium.com/@TimvanBaarsen/how-to-run-an-elasticsearch-7-x-single-node-cluster-for-local-development-using-docker-compose-2b7ab73d8b82>
+
+Снова пытаемся запустить нашу систему логирования и проверяем успешность старта.
+
+Kibana - инструмент для визуализации и анализа логов от компании Elastic.
+Откроем WEB-интерфейс Kibana для просмотра собранных в ElasticSearch логов Post-сервиса (kibana слушает на порту 5601)
+
+- введем в поле индекса паттерна: fluentd-* и создадим индекс маппинг
+- нажмем "Discovery" чтобы посмотреть информацию о полученных лог сообщениях (график покажет в какой момент времени поступало то или иное количество лог сообщений)
+- нажмем на знак "развернуть" напротив одного из лог сообщений, чтобы посмотреть подробную информацию о нем
+
+Мы увидим лог-сообщение, которые мы недавно наблюдали в терминале. Теперь эти лог-сообщения хранятся централизованно в ElasticSearch. Также видим доп. информацию о том, откуда поступил данный лог.
+
+Обратим внимание на то, что наименования в левом столбце, называются полями. По полям можно производить поиск для быстрого нахождения нужной информации.
+
+Для того чтобы посмотреть некоторые примеры поиска, можно ввести в поле поиска произвольное выражение.
+К примеру, посмотрев список доступных полей, мы можем выполнить поиск всех логов, поступивших с контейнера reddit_post_1.
+
+Заметим, что поле log содержит в себе JSON объект, который содержит много интересной нам информации.
+
+Нам хотелось бы выделить эту информацию в поля, чтобы иметь возможность производить по ним поиск. Например, для того чтобы найти все логи, связанные с определенным событием (event) или конкретным сервисов (service).
+
+Мы можем достичь этого за счет использования фильтров для выделения нужной информации.
+
+Добавим фильтр для парсинга json логов, приходящих от post сервиса, в конфиг fluentd.conf
+
+```
+<filter service.post>
+  @type parser
+  format json
+  key_name log
+</filter>
+```
+
+После этого персоберем образ и перезапустим сервис fluentd.
+Создадим пару новых постов, чтобы проверить парсинг логов.
+
+Вернемся в Kibana, взглянем на одно из сообщений и увидим, что вместо одного
+поля log появилось множество полей с нужной нам информацией.
+
+### Неструктурированные логи
+
+Неструктурированные логи отличаются отсутствием четкой структуры данных. Также часто бывает, что формат лог-сообщений не подстроен под систему централизованного логирования, что существенно увеличивает затраты вычислительных и временных ресурсов на обработку данных и выделение нужной информации.
+На примере сервиса ui мы рассмотрим пример логов с неудобным форматом сообщений.
+
+По аналогии с post сервисом определим для ui сервиса драйвер для логирования fluentd в compose-файле docker-compose.yml
+
+```
+    logging:
+      driver: "fluentd"
+      options:
+        fluentd-address: localhost:24224
+        tag: service.ui
+```
+
+Перезапустим ui сервис из каталога docker:
+
+```
+docker-compose stop ui
+docker-compose rm ui
+docker-compose up -d
+```
+
+И посмотрим на формат собираемых сообщений
+
+Когда приложение или сервис не пишет структурированные логи, приходится использовать старые добрые регулярные выражения для их парсинга в /docker fluentd/fluent.conf.
+Следующее регулярное выражение нужно, чтобы успешно выделить интересующую нас информацию из лога UI-сервиса в поля:
+
+```
+<filter service.ui>
+  @type parser
+  format /\[(?<time>[^\]]*)\]  (?<level>\S+) (?<user>\S+)[\W]*service=(?<service>\S+)[\W]*event=(?<event>\S+)[\W]*(?:path=(?<path>\S+)[\W]*)?request_id=(?<request_id>\S+)[\W]*(?:remote_addr=(?<remote_addr>\S+)[\W]*)?(?:method= (?<method>\S+)[\W]*)?(?:response_status=(?<response_status>\S+)[\W]*)?(?:message='(?<message>[^\']*)[\W]*)?/
+  key_name log
+</filter>
+```
+
+Обновим образ fluentd и перезапустим kibana
+
+```
+docker build -t $USER_NAME/fluentd .
+docker-compose -f docker-compose-logging.yml down
+docker-compose -f docker-compose-logging.yml up -d
+```
+
+Проверим результат
+
+Созданные регулярки могут иметь ошибки, их сложно менять и невозможно читать. Для облегчения задачи парсинга вместо стандартных регулярок можно использовать grok-шаблоны. По-сути grok’и - это именованные шаблоны регулярных выражеий (очень похоже на функции). Можно использовать готовый regexp, просто сославшись на него как на функцию docker/fluentd/fluent.conf
+
+```
+<filter service.ui>
+  @type parser
+  key_name log
+  format grok
+  grok_pattern %{RUBY_LOGGER}
+</filter>
+```
+
+Это grok-шаблон, зашитый в плагин для fluentd
+Как мы можем заметить часть логов все еще нужно распарсить. Для этого используем несколько Grok-ов по-очереди:
+
+```
+<filter service.ui>
+  @type parser
+  format grok
+  grok_pattern service=%{WORD:service} \| event=%{WORD:event} \| request_id=%{GREEDYDATA:request_id} \| message='%{GREEDYDATA:message}'
+  key_name message
+  reserve_data true
+</filter>
+```
+
+Задание со * - UI-сервис шлет логи в нескольких форматах. Такой лог остался неразобранным.
+Дополним наш fluent.conf для разбора обоих форматор логов UI-сервиса одновременно:
+
+```
+<filter service.ui>
+  @type parser
+  format grok
+  <grok>
+    pattern service=%{WORD:service} \| event=%{WORD:event} \| request_id=%{GREEDYDATA:request_id} \| message='%{GREEDYDATA:message}'
+  </grok>
+  <grok>
+    pattern service=%{WORD:service} \| event=%{WORD:event} \| path=%{URIPATH:path} \| request_id=%{GREEDYDATA:request_id} \| remote_addr=%{IP:remote_addr} \| method= %{WORD:message} \| response_status=%{INT:response_status}
+  </grok>
+  key_name message
+  reserve_data true
+</filter>
+```
+
+### Распределенный трейсинг
+
+Добавим в compose-файл для сервисов логирования сервис распределенного трейсинга Zipkin:
+
+```
+services:
+  zipkin:
+    image: openzipkin/zipkin
+    ports:
+      - "9411:9411"
+```
+
+Правим наш docker/docker-compose-logging.yml
+Добавим для каждого сервиса поддержку ENV переменных и зададим параметризованный параметр ZIPKIN_ENABLED
+
+```
+environment:
+- ZIPKIN_ENABLED=${ZIPKIN_ENABLED}
+```
+
+В .env файле укажем: ZIPKIN_ENABLED=true
+
+Пересоздадим наши сервисы:
+
+```
+docker-compose -f docker-compose-logging.yml -f docker-compose.yml down
+docker-compose -f docker-compose-logging.yml -f docker-compose.yml up -d
+```
+
+Откроем главную страницу приложения и обновим ее несколько
+раз.
+Заглянув затем в UI Zipkin (страницу потребуется обновить), мы должны найти несколько трейсов (следов, которые оставили запросы проходя через систему наших сервисов).
+
+Нажмем на один из трейсов, чтобы посмотреть, как запрос шел через нашу систему микросервисов и каково общее время обработки запроса у нашего приложения при запросе главной страницы.
+
+Видим, что первым делом наш запрос попал к ui сервису, который смог обработать наш запрос за суммарное время равное 72.075ms.
+Из этих 72.075ms ушло 18.147ms на то чтобы ui мог направить запрос post сервису по пути /posts и получить от него ответ в виде списка постов. Post сервис в свою очередь использовал функцию обращения к БД за списком постов, на что ушло 3.572ms.
+
+Синие полоски со временем называются span и представляют собой одну операцию, которая произошла при обработке запроса. Набор span-ов называется трейсом. Суммарное время обработки нашего запроса равно верхнему span-у, который включает в себя время всех span-ов, расположенных под ним.
+
+### Задание со *
+
+С нашим приложением происходит что-то странное.
+Пользователи жалуются, что при нажатии на пост они вынуждены долго ждать, пока у них загрузится страница с постом. Жалоб на загрузку других страниц не поступало.
+Выясним в чем проблема, используя Zipkin.
+
+<https://github.com/Artemmkin/bugged-code>
+
+- скачиваем код микросервисов
+- правим docker_build.sh добавляя тег bugged при создании образов
+- дополняем наш Makefile для более легкой сборки и развертывния
+- развертывем наше приложение
+- откроем главную страницу приложения и пробуем нажать на пост, видим задержку загрузки страницы с постом
+- идем в Zipkin и смотрим на время каждого span
+- по span сервиса post отвечающего за db_find_single_post видим время обработки более 3 секунд
+- далее идем в /bugged-code/post-py/post_app.py и ищем, что связано с db_find_single_post
+- ниже находим и правим проблему нашей задержки - time.sleep(3)
+- пересобираем образ микросервиса post, деплоим и снова проверяем работу приложения
+
+Проблема решена!
+
 ## Мониторинг приложения и инфраструктуры
 
 Мой Docker Hub <https://hub.docker.com/u/kovtalex/>
