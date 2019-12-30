@@ -6,9 +6,624 @@
 
 ### Создание примитивов
 
+Опишем приложение в контексте Kubernetes с помощью manifest-ов в YAML-формате.
+Основным примитивом будет Deployment.
+
+Основные задачи сущности Deployment:
+- создание Replication Controller-а (следит, чтобы число запущенных Pod-ов соответствовало описанному)
+- ведение истории версий запущенных Pod-ов (для различных стратегий деплоя, для возможностей отката)
+- описание процесса деплоя (стратегия, параметры стратегий)
+
+Теперь:
+- cоздадим директорию kubernetes в корне репозитория
+- внутри директории kubernetes создадим директорию reddit
+- сохраним файл post-deployment.yml в директории kubernetes/reddit
+- создадим собственные файлы с Deployment манифестами приложений и сохраните в папке kubernetes/reddit
+  - ui-deployment.yml
+  - comment-deployment.yml
+  - mongo-deployment.yml
+  - post-deployment.yml
+
+```
+---
+apiVersion: apps/v1beta2
+kind: Deployment
+metadata:
+  name: post-deployment
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: post
+  template:
+    metadata:
+      name: post
+      labels:
+        app: post
+    spec:
+      containers:
+      - image: chromko/post
+        name: post
+```
+
+Эти файлы нужны для создания структуры и проверки работоспособности kubernetes-кластера.
+
 ### Kubernetes The Hard Way
 
-Погнали...
+Пройдем этами Kubernetes The Hard Way <https://github.com/kelseyhightower/kubernetes-the-hard-way>
+
+Туториал представляет собой:
+- пошаговое руководство по ручной инсталляции основных компонентов Kubernetes кластера
+- краткое описание необходимых действий и объектов
+
+Что сделаем:
+- создадим отдельную директорию the_hard_way в директории kubernetes
+- пройдем Kubernetes The Hard Way
+- проверим, что kubectl apply -f <filename> проходит по созданным до этого deployment-ам (ui, post, mongo, comment) и поды запускаются
+- удалим кластер после прохождения THW
+- все созданные в ходе прохождения THW файлы (кроме бинарных) поместим в папку kubernetes/the_hard_way репозитория
+
+#### Prerequisites
+
+Воспользуемся Google Cloud Platform
+
+- Для начала установим tmux и запустим его
+
+```
+sudo apt-get install -y tmux
+tmux attach || tmux new
+
+Краткая шпаргалка по tmux https://habr.com/ru/post/126996/
+Включение синхронизации панелей ctrl+b и затем shift+:
+set synchronize-panes on/off
+```
+
+- Проверим версию Google Cloud SDK, должна быть выше 262.0.0
+
+```
+gcloud version
+```
+
+- Зададим зону и регион
+
+```
+gcloud config set compute/region europe-west1
+gcloud config set compute/zone europe-west1-b
+```
+
+#### Установка Client Tools (cfssl, cfssljson и kubectl)
+
+- Установим cfssl и cfssljson
+
+```
+wget -q --show-progress --https-only --timestamping \
+  https://storage.googleapis.com/kubernetes-the-hard-way/cfssl/linux/cfssl \
+  https://storage.googleapis.com/kubernetes-the-hard-way/cfssl/linux/cfssljson
+chmod +x cfssl cfssljson
+sudo mv cfssl cfssljson /usr/local/bin/
+```
+
+- Проверка
+
+```
+cfssl version
+
+Version: 1.3.4
+Revision: dev
+Runtime: go1.13
+```
+
+```
+cfssljson --version
+
+Version: 1.3.4
+Revision: dev
+Runtime: go1.13
+```
+
+- Установим kubectl
+
+```
+wget https://storage.googleapis.com/kubernetes-release/release/v1.15.3/bin/linux/amd64/kubectl
+chmod +x kubectl
+sudo mv kubectl /usr/local/bin/
+```
+
+- Проверка
+
+```
+kubectl version --client
+
+Client Version: version.Info{Major:"1", Minor:"15", GitVersion:"v1.15.3", GitCommit:"2d3c76f9091b6bec110a5e63777c332469e0cba2", GitTreeState:"clean", BuildDate:"2019-08-19T11:13:54Z", GoVersion:"go1.12.9", Compiler:"gc", Platform:"linux/amd64"}
+```
+
+#### Предоставление вычислительных ресурсов
+
+- Создаем kubernetes-the-hard-way пользовательскую VPC сеть
+
+```
+gcloud compute networks create kubernetes-the-hard-way --subnet-mode custom
+```
+
+- Создаем kubernetes подсеть в kubernetes-the-hard-way VPC сети
+
+```
+gcloud compute networks subnets create kubernetes \
+  --network kubernetes-the-hard-way \
+  --range 10.240.0.0/24
+```
+
+- Создаем правило фаервола для внутренней коммуникации
+
+```
+gcloud compute firewall-rules create kubernetes-the-hard-way-allow-internal \
+  --allow tcp,udp,icmp \
+  --network kubernetes-the-hard-way \
+  --source-ranges 10.240.0.0/24,10.200.0.0/16
+```
+
+- Создаем правило фаервола для внешнего доступа по SSH, ICMP и HTTPS
+
+```
+gcloud compute firewall-rules create kubernetes-the-hard-way-allow-external \
+  --allow tcp:22,tcp:6443,icmp \
+  --network kubernetes-the-hard-way \
+  --source-ranges 0.0.0.0/0
+```
+
+- Просмотрим список правил нашей VPC
+
+```
+gcloud compute firewall-rules list --filter="network:kubernetes-the-hard-way"
+NAME                                    NETWORK                  DIRECTION  PRIORITY  ALLOW                 DENY
+kubernetes-the-hard-way-allow-external  kubernetes-the-hard-way  INGRESS    1000      tcp:22,tcp:6443,icmp
+kubernetes-the-hard-way-allow-internal  kubernetes-the-hard-way  INGRESS    1000      tcp,udp,icmp
+```
+
+- Назначаем статический IP, который будет назначен на внешний балансировщик нагрузки Kubernetes API серверов
+
+```
+gcloud compute addresses create kubernetes-the-hard-way \
+  --region $(gcloud config get-value compute/region)
+```
+
+- Проверка
+
+```
+gcloud compute addresses list --filter="name=('kubernetes-the-hard-way')"
+
+NAME                     REGION        ADDRESS        STATUS
+kubernetes-the-hard-way  europe-west1  35.240.96.49   RESERVED
+```
+
+Создание экземпляров VM
+
+- Kubernetes Controllers
+
+```
+for i in 0 1 2; do
+  gcloud compute instances create controller-${i} \
+    --async \
+    --boot-disk-size 200GB \
+    --can-ip-forward \
+    --image-family ubuntu-1804-lts \
+    --image-project ubuntu-os-cloud \
+    --machine-type n1-standard-1 \
+    --private-network-ip 10.240.0.1${i} \
+    --scopes compute-rw,storage-ro,service-management,service-control,logging-write,monitoring \
+    --subnet kubernetes \
+    --tags kubernetes-the-hard-way,controller
+done
+```
+
+- Kubernetes Workers
+
+```
+for i in 0 1 2; do
+  gcloud compute instances create worker-${i} \
+    --async \
+    --boot-disk-size 200GB \
+    --can-ip-forward \
+    --image-family ubuntu-1804-lts \
+    --image-project ubuntu-os-cloud \
+    --machine-type n1-standard-1 \
+    --metadata pod-cidr=10.200.${i}.0/24 \
+    --private-network-ip 10.240.0.2${i} \
+    --scopes compute-rw,storage-ro,service-management,service-control,logging-write,monitoring \
+    --subnet kubernetes \
+    --tags kubernetes-the-hard-way,worker
+done
+```
+
+- Проверка
+
+```
+gcloud compute instances list
+
+NAME          ZONE            MACHINE_TYPE   PREEMPTIBLE  INTERNAL_IP  EXTERNAL_IP      STATUS
+controller-0  europe-west1-b  n1-standard-1               10.240.0.10  35.233.123.235   RUNNING
+controller-1  europe-west1-b  n1-standard-1               10.240.0.11  146.148.7.86     RUNNING
+controller-2  europe-west1-b  n1-standard-1               10.240.0.12  35.195.97.219    RUNNING
+worker-0      europe-west1-b  n1-standard-1               10.240.0.20  35.189.249.239   RUNNING
+worker-1      europe-west1-b  n1-standard-1               10.240.0.21  35.240.55.107    RUNNING
+worker-2      europe-west1-b  n1-standard-1               10.240.0.22  104.155.119.210  RUNNING
+```
+
+#### Развертывание CA и генерация TLS сертификатов
+
+- Certificate Authority
+
+```
+{
+
+cat > ca-config.json <<EOF
+{
+  "signing": {
+    "default": {
+      "expiry": "8760h"
+    },
+    "profiles": {
+      "kubernetes": {
+        "usages": ["signing", "key encipherment", "server auth", "client auth"],
+        "expiry": "8760h"
+      }
+    }
+  }
+}
+EOF
+
+cat > ca-csr.json <<EOF
+{
+  "CN": "Kubernetes",
+  "key": {
+    "algo": "rsa",
+    "size": 2048
+  },
+  "names": [
+    {
+      "C": "US",
+      "L": "Portland",
+      "O": "Kubernetes",
+      "OU": "CA",
+      "ST": "Oregon"
+    }
+  ]
+}
+EOF
+
+cfssl gencert -initca ca-csr.json | cfssljson -bare ca
+
+}
+```
+
+Результат
+
+```
+ca-key.pem
+ca.pem
+```
+
+- The Admin Client Certificate
+
+
+```
+{
+
+cat > admin-csr.json <<EOF
+{
+  "CN": "admin",
+  "key": {
+    "algo": "rsa",
+    "size": 2048
+  },
+  "names": [
+    {
+      "C": "US",
+      "L": "Portland",
+      "O": "system:masters",
+      "OU": "Kubernetes The Hard Way",
+      "ST": "Oregon"
+    }
+  ]
+}
+EOF
+
+cfssl gencert \
+  -ca=ca.pem \
+  -ca-key=ca-key.pem \
+  -config=ca-config.json \
+  -profile=kubernetes \
+  admin-csr.json | cfssljson -bare admin
+
+}
+```
+
+Результат
+
+```
+admin-key.pem
+admin.pem
+```
+
+- The Kubelet Client Certificates
+
+```
+for instance in worker-0 worker-1 worker-2; do
+cat > ${instance}-csr.json <<EOF
+{
+  "CN": "system:node:${instance}",
+  "key": {
+    "algo": "rsa",
+    "size": 2048
+  },
+  "names": [
+    {
+      "C": "US",
+      "L": "Portland",
+      "O": "system:nodes",
+      "OU": "Kubernetes The Hard Way",
+      "ST": "Oregon"
+    }
+  ]
+}
+EOF
+
+EXTERNAL_IP=$(gcloud compute instances describe ${instance} \
+  --format 'value(networkInterfaces[0].accessConfigs[0].natIP)')
+
+INTERNAL_IP=$(gcloud compute instances describe ${instance} \
+  --format 'value(networkInterfaces[0].networkIP)')
+
+cfssl gencert \
+  -ca=ca.pem \
+  -ca-key=ca-key.pem \
+  -config=ca-config.json \
+  -hostname=${instance},${EXTERNAL_IP},${INTERNAL_IP} \
+  -profile=kubernetes \
+  ${instance}-csr.json | cfssljson -bare ${instance}
+done
+```
+
+Результат
+
+```
+worker-0-key.pem
+worker-0.pem
+worker-1-key.pem
+worker-1.pem
+worker-2-key.pem
+worker-2.pem
+```
+
+- The Controller Manager Client Certificate
+
+```
+{
+
+cat > kube-controller-manager-csr.json <<EOF
+{
+  "CN": "system:kube-controller-manager",
+  "key": {
+    "algo": "rsa",
+    "size": 2048
+  },
+  "names": [
+    {
+      "C": "US",
+      "L": "Portland",
+      "O": "system:kube-controller-manager",
+      "OU": "Kubernetes The Hard Way",
+      "ST": "Oregon"
+    }
+  ]
+}
+EOF
+
+cfssl gencert \
+  -ca=ca.pem \
+  -ca-key=ca-key.pem \
+  -config=ca-config.json \
+  -profile=kubernetes \
+  kube-controller-manager-csr.json | cfssljson -bare kube-controller-manager
+
+}
+```
+
+Результат
+
+```
+kube-controller-manager-key.pem
+kube-controller-manager.pem
+```
+
+- The Kube Proxy Client Certificate
+
+```
+{
+
+cat > kube-proxy-csr.json <<EOF
+{
+  "CN": "system:kube-proxy",
+  "key": {
+    "algo": "rsa",
+    "size": 2048
+  },
+  "names": [
+    {
+      "C": "US",
+      "L": "Portland",
+      "O": "system:node-proxier",
+      "OU": "Kubernetes The Hard Way",
+      "ST": "Oregon"
+    }
+  ]
+}
+EOF
+
+cfssl gencert \
+  -ca=ca.pem \
+  -ca-key=ca-key.pem \
+  -config=ca-config.json \
+  -profile=kubernetes \
+  kube-proxy-csr.json | cfssljson -bare kube-proxy
+
+}
+```
+
+Результат
+
+```
+kube-proxy-key.pem
+kube-proxy.pem
+```
+
+- The Scheduler Client Certificate
+
+```
+{
+
+cat > kube-scheduler-csr.json <<EOF
+{
+  "CN": "system:kube-scheduler",
+  "key": {
+    "algo": "rsa",
+    "size": 2048
+  },
+  "names": [
+    {
+      "C": "US",
+      "L": "Portland",
+      "O": "system:kube-scheduler",
+      "OU": "Kubernetes The Hard Way",
+      "ST": "Oregon"
+    }
+  ]
+}
+EOF
+
+cfssl gencert \
+  -ca=ca.pem \
+  -ca-key=ca-key.pem \
+  -config=ca-config.json \
+  -profile=kubernetes \
+  kube-scheduler-csr.json | cfssljson -bare kube-scheduler
+
+}
+```
+
+Результат
+
+```
+kube-scheduler-key.pem
+kube-scheduler.pem
+```
+
+- The Kubernetes API Server Certificate
+
+```
+{
+
+KUBERNETES_PUBLIC_ADDRESS=$(gcloud compute addresses describe kubernetes-the-hard-way \
+  --region $(gcloud config get-value compute/region) \
+  --format 'value(address)')
+
+KUBERNETES_HOSTNAMES=kubernetes,kubernetes.default,kubernetes.default.svc,kubernetes.default.svc.cluster,kubernetes.svc.cluster.local
+
+cat > kubernetes-csr.json <<EOF
+{
+  "CN": "kubernetes",
+  "key": {
+    "algo": "rsa",
+    "size": 2048
+  },
+  "names": [
+    {
+      "C": "US",
+      "L": "Portland",
+      "O": "Kubernetes",
+      "OU": "Kubernetes The Hard Way",
+      "ST": "Oregon"
+    }
+  ]
+}
+EOF
+
+cfssl gencert \
+  -ca=ca.pem \
+  -ca-key=ca-key.pem \
+  -config=ca-config.json \
+  -hostname=10.32.0.1,10.240.0.10,10.240.0.11,10.240.0.12,${KUBERNETES_PUBLIC_ADDRESS},127.0.0.1,${KUBERNETES_HOSTNAMES} \
+  -profile=kubernetes \
+  kubernetes-csr.json | cfssljson -bare kubernetes
+
+}
+```
+
+Результат
+
+```
+kubernetes-key.pem
+kubernetes.pem
+```
+
+- The Service Account Key Pair
+
+```
+{
+
+cat > service-account-csr.json <<EOF
+{
+  "CN": "service-accounts",
+  "key": {
+    "algo": "rsa",
+    "size": 2048
+  },
+  "names": [
+    {
+      "C": "US",
+      "L": "Portland",
+      "O": "Kubernetes",
+      "OU": "Kubernetes The Hard Way",
+      "ST": "Oregon"
+    }
+  ]
+}
+EOF
+
+cfssl gencert \
+  -ca=ca.pem \
+  -ca-key=ca-key.pem \
+  -config=ca-config.json \
+  -profile=kubernetes \
+  service-account-csr.json | cfssljson -bare service-account
+
+}
+```
+
+Результат
+
+```
+service-account-key.pem
+service-account.pem
+```
+
+- Копирование сертификатов на ноды
+
+```
+for instance in worker-0 worker-1 worker-2; do
+  gcloud compute scp ca.pem ${instance}-key.pem ${instance}.pem ${instance}:~/
+done
+
+for instance in controller-0 controller-1 controller-2; do
+  gcloud compute scp ca.pem ca-key.pem kubernetes-key.pem kubernetes.pem \
+    service-account-key.pem service-account.pem ${instance}:~/
+done
+```
+
+#### Генерация Kubernetes конфигурационных файлов для  аутентификации
+
+
+
 
 ## Логирование и распределенная трассировка
 
