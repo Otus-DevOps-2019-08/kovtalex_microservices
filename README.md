@@ -2,6 +2,14 @@
 
 [![Build Status](https://travis-ci.com/Otus-DevOps-2019-08/kovtalex_microservices.svg?branch=master)](https://travis-ci.com/Otus-DevOps-2019-08/kovtalex_microservices)
 
+## Введение в Kubernetes
+
+### Создание примитивов
+
+### Kubernetes The Hard Way
+
+Погнали...
+
 ## Логирование и распределенная трассировка
 
 ### Подготовка
