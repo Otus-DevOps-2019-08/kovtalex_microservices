@@ -63,7 +63,7 @@ spec:
 - удалим кластер после прохождения THW
 - все созданные в ходе прохождения THW файлы (кроме бинарных) поместим в папку kubernetes/the_hard_way репозитория
 
-#### Prerequisites
+#### Подготовка
 
 Воспользуемся Google Cloud Platform
 
@@ -91,9 +91,10 @@ gcloud config set compute/region europe-west1
 gcloud config set compute/zone europe-west1-b
 ```
 
-#### Установка Client Tools (cfssl, cfssljson и kubectl)
+#### Установка клиентской части (cfssl, cfssljson и kubectl)
 
 - Установим cfssl и cfssljson
+Утилиты командной строки cfssl и cfssljson используются для обеспечения инфраструктуры PKI и генерации сертификатов TLS.
 
 ```
 wget -q --show-progress --https-only --timestamping \
@@ -122,6 +123,7 @@ Runtime: go1.13
 ```
 
 - Установим kubectl
+Утилита командной строки kubectl используется для взаимодействия с сервером Kubernetes API.
 
 ```
 wget https://storage.googleapis.com/kubernetes-release/release/v1.15.3/bin/linux/amd64/kubectl
@@ -249,9 +251,15 @@ worker-1      europe-west1-b  n1-standard-1               10.240.0.21  35.240.55
 worker-2      europe-west1-b  n1-standard-1               10.240.0.22  104.155.119.210  RUNNING
 ```
 
-#### Развертывание CA и генерация TLS сертификатов
+#### Развертывание CA и создание TLS сертификатов
+
+Развернем PKI инфраструктуру используя инструменты CloudFlare's PKI, cfssl и затем применим для начальной загрузки Certificate Authority и создания TLS сертификатов для следующих компонентов: etcd, kube-apiserver, kube-controller-manager, kube-scheduler, kubelet и kube-proxy.
 
 - Certificate Authority
+
+В этой части мы развернем Certificate Authority, который будет использован для создания дополнительных сертификатов TLS
+
+Создание CA файла конфигурации, сертификата и закрытого ключа
 
 ```
 {
@@ -303,7 +311,11 @@ ca-key.pem
 ca.pem
 ```
 
-- The Admin Client Certificate
+- Сертификаты клиента и сервера
+
+В этом разделе мы создадим сертификаты сервера и клиента для каждого Kubernetes компонента для admin пользователя
+
+The Admin Client Certificate
 
 
 ```
