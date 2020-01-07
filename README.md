@@ -2,21 +2,2282 @@
 
 [![Build Status](https://travis-ci.com/Otus-DevOps-2019-08/kovtalex_microservices.svg?branch=master)](https://travis-ci.com/Otus-DevOps-2019-08/kovtalex_microservices)
 
+## Введение в Kubernetes
+
+### Создание примитивов
+
+Опишем приложение в контексте Kubernetes с помощью manifest-ов в YAML-формате.
+Основным примитивом будет Deployment.
+
+Основные задачи сущности Deployment:
+
+- создание Replication Controller-а (следит, чтобы число запущенных Pod-ов соответствовало описанному)
+- ведение истории версий запущенных Pod-ов (для различных стратегий деплоя, для возможностей отката)
+- описание процесса деплоя (стратегия, параметры стратегий)
+
+Теперь:
+
+- cоздадим директорию kubernetes в корне репозитория
+- внутри директории kubernetes создадим директорию reddit
+- сохраним файл post-deployment.yml в директории kubernetes/reddit
+- создадим собственные файлы с Deployment манифестами приложений и сохраните в папке kubernetes/reddit
+  - ui-deployment.yml
+  - comment-deployment.yml
+  - mongo-deployment.yml
+  - post-deployment.yml
+
+```yml
+---
+apiVersion: apps/v1beta2
+kind: Deployment
+metadata:
+  name: post-deployment
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: post
+  template:
+    metadata:
+      name: post
+      labels:
+        app: post
+    spec:
+      containers:
+      - image: chromko/post
+        name: post
+```
+
+Эти файлы нужны для создания структуры и проверки работоспособности kubernetes-кластера.
+
+### Kubernetes The Hard Way
+
+Пройдем этапы Kubernetes [The Hard Way](https://github.com/kelseyhightower/kubernetes-the-hard-way)
+
+Туториал представляет собой:
+
+- пошаговое руководство по ручной инсталляции основных компонентов Kubernetes кластера
+- краткое описание необходимых действий и объектов
+
+Что сделаем:
+
+- создадим отдельную директорию the_hard_way в директории kubernetes
+- пройдем Kubernetes The Hard Way
+- проверим, что kubectl apply -f filename проходит по созданным до этого deployment-ам (ui, post, mongo, comment) и поды запускаются
+- удалим кластер после прохождения THW
+- все созданные в ходе прохождения THW файлы (кроме бинарных) поместим в папку kubernetes/the_hard_way репозитория
+
+#### Подготовка
+
+Для начала установим tmux и запустим его:
+
+```console
+sudo apt-get install -y tmux
+tmux attach || tmux new
+```
+
+>Краткая шпаргалка по [tmux](https://habr.com/ru/post/126996/)
+Включение синхронизации панелей ctrl+b и затем shift+:
+set synchronize-panes on/off
+
+Воспользуемся [Google Cloud Platform](https://cloud.google.com/).
+
+Проверим версию Google Cloud SDK, должна быть выше 262.0.0:
+
+```console
+gcloud version
+```
+
+Зададим зону и регион:
+
+```console
+gcloud config set compute/region europe-west1
+gcloud config set compute/zone europe-west1-b
+```
+
+#### Установка клиенских утилит
+
+Далее мы установим утилиты коммандной строки: [cfssl](https://github.com/cloudflare/cfssl), [cfssljson](https://github.com/cloudflare/cfssl) и [kubectl](https://kubernetes.io/docs/tasks/tools/install-kubectl).
+
+##### Установим cfssl и cfssljson
+
+Утилиты командной строки `cfssl` и `cfssljson` используются для обеспечения [инфраструктуры PKI](https://en.wikipedia.org/wiki/Public_key_infrastructure) и создания сертификатов TLS.
+
+Установим их:
+
+```console
+wget -q --show-progress --https-only --timestamping \
+  https://storage.googleapis.com/kubernetes-the-hard-way/cfssl/linux/cfssl \
+  https://storage.googleapis.com/kubernetes-the-hard-way/cfssl/linux/cfssljson
+chmod +x cfssl cfssljson
+sudo mv cfssl cfssljson /usr/local/bin/
+```
+
+Проверим, что `cfssl` и `cfssljson` имеют версию выше 1.3.4:
+
+```console
+cfssl version
+
+Version: 1.3.4
+Revision: dev
+Runtime: go1.13
+```
+
+```console
+cfssljson --version
+
+Version: 1.3.4
+Revision: dev
+Runtime: go1.13
+```
+
+##### Установим kubectl
+
+Утилита командной строки `kubectl` используется для взаимодействия с Kubernetes API Server.
+
+```console
+wget https://storage.googleapis.com/kubernetes-release/release/v1.15.3/bin/linux/amd64/kubectl
+chmod +x kubectl
+sudo mv kubectl /usr/local/bin/
+```
+
+Проверим, что `kubelet` имеет версию выше 1.15.3:
+
+```console
+kubectl version --client
+
+Client Version: version.Info{Major:"1", Minor:"15", GitVersion:"v1.15.3", GitCommit:"2d3c76f9091b6bec110a5e63777c332469e0cba2", GitTreeState:"clean", BuildDate:"2019-08-19T11:13:54Z", GoVersion:"go1.12.9", Compiler:"gc", Platform:"linux/amd64"}
+```
+
+#### Предоставление VM
+
+Для Kubernetes требуется набор VM для размещения управляющего уровня Kubernetes и рабочих нодов, на которых в конечном итоге запускаются контейнеры. Далее мы предоставим VM, необходимые для запуска безопасного и высокодоступного кластера Kubernetes в одной [compute zone](https://cloud.google.com/compute/docs/regions-zones/regions-zones).
+
+##### Сети
+
+[Сетевая модель](https://kubernetes.io/docs/concepts/cluster-administration/networking/#kubernetes-model) Kubernetes предполагает плоскую сеть, в которой контейнеры и ноды могут взаимодействовать друг с другом. В тех случаях, когда это нежелательно, [сетевые политики](https://kubernetes.io/docs/concepts/services-networking/network-policies/) могут ограничивать способы взаимодействия групп контейнеров друг с другом и с внешними конечными точками сети.
+
+##### Virtual Private Cloud Network
+
+В этом разделе мы настроим [Virtual Private Cloud](https://cloud.google.com/compute/docs/networks-and-firewalls#networks) (VPC) сеть для размещения кластера Kubernetes.
+
+Создаем `kubernetes-the-hard-way` пользовательскую VPC сеть:
+
+```console
+gcloud compute networks create kubernetes-the-hard-way --subnet-mode custom
+```
+
+Для [подсети](https://cloud.google.com/compute/docs/vpc/#vpc_networks_and_subnets) должен быть предусмотрен диапазон IP-адресов, достаточно большой для назначения приватного IP-адреса каждой ноде в кластере Kubernetes.
+
+Создаем `kubernetes` подсеть в `kubernetes-the-hard-way` VPC сети:
+
+```console
+gcloud compute networks subnets create kubernetes \
+  --network kubernetes-the-hard-way \
+  --range 10.240.0.0/24
+```
+
+##### Создаем правило фаервола для внутренего взаимодействия
+
+Создадим правило фаервола, которое разрешает внутреннюю связь по всем протоколам:
+
+```console
+gcloud compute firewall-rules create kubernetes-the-hard-way-allow-internal \
+  --allow tcp,udp,icmp \
+  --network kubernetes-the-hard-way \
+  --source-ranges 10.240.0.0/24,10.200.0.0/16
+```
+
+Создаем правило фаервола для внешнего доступа по SSH, ICMP и HTTPS:
+
+```console
+gcloud compute firewall-rules create kubernetes-the-hard-way-allow-external \
+  --allow tcp:22,tcp:6443,icmp \
+  --network kubernetes-the-hard-way \
+  --source-ranges 0.0.0.0/0
+```
+
+>Внешний балансировщик нагрузки будет использоваться для предоставления Kubernetes API Servers удаленным клиентам.
+
+Просмотрим список правил нашей `kubernetes-the-hard-way` VPC:
+
+```console
+gcloud compute firewall-rules list --filter="network:kubernetes-the-hard-way"
+
+NAME                                    NETWORK                  DIRECTION  PRIORITY  ALLOW                 DENY
+kubernetes-the-hard-way-allow-external  kubernetes-the-hard-way  INGRESS    1000      tcp:22,tcp:6443,icmp
+kubernetes-the-hard-way-allow-internal  kubernetes-the-hard-way  INGRESS    1000      tcp,udp,icmp
+```
+
+##### Публичный IP-адрес Kubernetes
+
+Назначаем статический IP, который будет назначен на внешний балансировщик нагрузки Kubernetes API Server:
+
+```console
+gcloud compute addresses create kubernetes-the-hard-way \
+  --region $(gcloud config get-value compute/region)
+```
+
+Убедимся что в нашем compute region по умолчанию создан статический IP-адрес `kubernetes-the-hard-way`:
+
+```console
+gcloud compute addresses list --filter="name=('kubernetes-the-hard-way')"
+
+NAME                     REGION        ADDRESS        STATUS
+kubernetes-the-hard-way  europe-west1  35.240.96.49   RESERVED
+```
+
+##### Создание экземпляров VM
+
+Далее будут подготовлены VM с использованием [Ubuntu Server](https://www.ubuntu.com/server) 18.04, которая хорошо поддерживает [containerd container runtime](https://github.com/containerd/containerd). Каждой VM будет предоставлен фиксированный приватный IP-адрес, чтобы упростить процесс запуска Kubernetes.
+
+##### Kubernetes контроллеры
+
+Создадим три VM, в которых будет размещен управляющий уровень Kubernetes:
+
+```console
+for i in 0 1 2; do
+  gcloud compute instances create controller-${i} \
+    --async \
+    --boot-disk-size 200GB \
+    --can-ip-forward \
+    --image-family ubuntu-1804-lts \
+    --image-project ubuntu-os-cloud \
+    --machine-type n1-standard-1 \
+    --private-network-ip 10.240.0.1${i} \
+    --scopes compute-rw,storage-ro,service-management,service-control,logging-write,monitoring \
+    --subnet kubernetes \
+    --tags kubernetes-the-hard-way,controller
+done
+```
+
+##### Kubernetes рабочие ноды
+
+Каждая рабочая нода требуется выделение подсети pod из диапазона CIDR кластера Kubernetes. Выделение pod подсети будет использоваться для настройки сети контейнера в дальнейших шагах. Метаданные VM `pod-cidr` будут использоваться для предоставления выделения pod подсетей в VM во время выполнения.
+
+>Диапазон CIDR кластера Kubernetes определяется флагом Controller Manager `--cluster-cidr`. В этом руководстве диапазон CIDR кластера будет установлен на `10.200.0.0/16`, который поддерживает 254 подсети.
+
+Создайте три VM, в которых будут размещаться рабочие ноды Kubernetes:
+
+```console
+for i in 0 1 2; do
+  gcloud compute instances create worker-${i} \
+    --async \
+    --boot-disk-size 200GB \
+    --can-ip-forward \
+    --image-family ubuntu-1804-lts \
+    --image-project ubuntu-os-cloud \
+    --machine-type n1-standard-1 \
+    --metadata pod-cidr=10.200.${i}.0/24 \
+    --private-network-ip 10.240.0.2${i} \
+    --scopes compute-rw,storage-ro,service-management,service-control,logging-write,monitoring \
+    --subnet kubernetes \
+    --tags kubernetes-the-hard-way,worker
+done
+```
+
+- Проверка
+
+Получим список VM нашей зоны по умолчанию:
+
+```console
+gcloud compute instances list
+
+NAME          ZONE            MACHINE_TYPE   PREEMPTIBLE  INTERNAL_IP  EXTERNAL_IP      STATUS
+controller-0  europe-west1-b  n1-standard-1               10.240.0.10  35.233.123.235   RUNNING
+controller-1  europe-west1-b  n1-standard-1               10.240.0.11  146.148.7.86     RUNNING
+controller-2  europe-west1-b  n1-standard-1               10.240.0.12  35.195.97.219    RUNNING
+worker-0      europe-west1-b  n1-standard-1               10.240.0.20  35.189.249.239   RUNNING
+worker-1      europe-west1-b  n1-standard-1               10.240.0.21  35.240.55.107    RUNNING
+worker-2      europe-west1-b  n1-standard-1               10.240.0.22  104.155.119.210  RUNNING
+```
+
+##### Настройка SSH доступа
+
+SSH будет использоваться для настройки контроллеров и рабочих нод. При первом подключении к VM ключи SSH будут сгенерированы для нас и сохранены в метаданных проекта или экземпляра, как описано в документации [по подключению к экземплярам](https://cloud.google.com/compute/docs/instances/connecting-to-instance).
+
+Проверка SSH поделючения к `controller-0` VM:
+
+```console
+gcloud compute ssh controller-0
+```
+
+Если мы впервые подключаетесь к VM, то для нас будут сгенерированы SSH-ключи. Введем пароль в ответ на приглашение продолжить:
+
+```console
+WARNING: The public SSH key file for gcloud does not exist.
+WARNING: The private SSH key file for gcloud does not exist.
+WARNING: You do not have an SSH key for gcloud.
+WARNING: SSH keygen will be executed to generate a key.
+Generating public/private rsa key pair.
+Enter passphrase (empty for no passphrase):
+Enter same passphrase again:
+```
+
+На этом этапе сгенерированные ключи SSH будут загружены и сохранены в нашем проекте:
+
+```console
+Your identification has been saved in /home/$USER/.ssh/google_compute_engine.
+Your public key has been saved in /home/$USER/.ssh/google_compute_engine.pub.
+The key fingerprint is:
+SHA256:nz1i8jHmgQuGt+WscqP5SeIaSy5wyIJeL71MuV+QruE $USER@$HOSTNAME
+The key's randomart image is:
++---[RSA 2048]----+
+|                 |
+|                 |
+|                 |
+|        .        |
+|o.     oS        |
+|=... .o .o o     |
+|+.+ =+=.+.X o    |
+|.+ ==O*B.B = .   |
+| .+.=EB++ o      |
++----[SHA256]-----+
+Updating project ssh metadata...-Updated [https://www.googleapis.com/compute/v1/projects/$PROJECT_ID].
+Updating project ssh metadata...done.
+Waiting for SSH key to propagate.
+```
+
+После обновления ключей SSH мы подключимся к `controller-0`:
+
+```console
+Welcome to Ubuntu 18.04.3 LTS (GNU/Linux 4.15.0-1042-gcp x86_64)
+...
+
+Last login: Mon Dec 30 14:34:27 2019 from XX.XX.XX.XX
+```
+
+Ввведем `exit` в командной строке для выхода из `controller-0`:
+
+```console
+$USER@controller-0:~$ exit
+
+logout
+Connection to XX.XXX.XXX.XXX closed
+```
+
+#### Предоставление CA и создание TLS сертификатов
+
+Далее мы развернем [PKI инфраструктуру](https://en.wikipedia.org/wiki/Public_key_infrastructure) используя инструменты CloudFlare's PKI, [cfssl](https://github.com/cloudflare/cfssl) и затем применим для запуска Certificate Authority и создания TLS сертификатов для следующих компонентов: etcd, kube-apiserver, kube-controller-manager, kube-scheduler, kubelet и kube-proxy.
+
+##### Certificate Authority
+
+В этой части мы развернем Certificate Authority, который будет использован для создания дополнительных сертификатов TLS.
+
+Создадим CA файла конфигурации, сертификат и закрытый ключ:
+
+```console
+{
+
+cat > ca-config.json <<EOF
+{
+  "signing": {
+    "default": {
+      "expiry": "8760h"
+    },
+    "profiles": {
+      "kubernetes": {
+        "usages": ["signing", "key encipherment", "server auth", "client auth"],
+        "expiry": "8760h"
+      }
+    }
+  }
+}
+EOF
+
+cat > ca-csr.json <<EOF
+{
+  "CN": "Kubernetes",
+  "key": {
+    "algo": "rsa",
+    "size": 2048
+  },
+  "names": [
+    {
+      "C": "US",
+      "L": "Portland",
+      "O": "Kubernetes",
+      "OU": "CA",
+      "ST": "Oregon"
+    }
+  ]
+}
+EOF
+
+cfssl gencert -initca ca-csr.json | cfssljson -bare ca
+
+}
+```
+
+Результат:
+
+```console
+ca-key.pem
+ca.pem
+```
+
+##### Сертификаты клиента и сервера
+
+В этом разделе мы создадим сертификаты сервера и клиента для каждого Kubernetes компонента для пользователя `admin`.
+
+Клиентский сертификат пользователя `admin`:
+
+```console
+{
+
+cat > admin-csr.json <<EOF
+{
+  "CN": "admin",
+  "key": {
+    "algo": "rsa",
+    "size": 2048
+  },
+  "names": [
+    {
+      "C": "US",
+      "L": "Portland",
+      "O": "system:masters",
+      "OU": "Kubernetes The Hard Way",
+      "ST": "Oregon"
+    }
+  ]
+}
+EOF
+
+cfssl gencert \
+  -ca=ca.pem \
+  -ca-key=ca-key.pem \
+  -config=ca-config.json \
+  -profile=kubernetes \
+  admin-csr.json | cfssljson -bare admin
+
+}
+```
+
+Результат:
+
+```console
+admin-key.pem
+admin.pem
+```
+
+#### Клиентские сертификаты Kubelet
+
+Kubernetes использует [специальный режим авторизации](https://kubernetes.io/docs/admin/authorization/node/), называемый Node Authorizer, который авторизует запросы API, сделанные [Kubelets](https://kubernetes.io/docs/concepts/overview/components/#kubelet). Чтобы авторизоваться Node Authorizer, Kubelets должны использовать учетные данные, которые идентифицируют их как принадлежащие к группе system:node с именем пользователя `system:node:<nodeName>`. В этом разделе мы создадим сертификат для каждой рабочей ноды Kubernetes, который отвечает требованиям Node Authorizer.
+
+Создадим сертификат и закрытый ключ для каждой рабочей ноды:
+
+```console
+for instance in worker-0 worker-1 worker-2; do
+cat > ${instance}-csr.json <<EOF
+{
+  "CN": "system:node:${instance}",
+  "key": {
+    "algo": "rsa",
+    "size": 2048
+  },
+  "names": [
+    {
+      "C": "US",
+      "L": "Portland",
+      "O": "system:nodes",
+      "OU": "Kubernetes The Hard Way",
+      "ST": "Oregon"
+    }
+  ]
+}
+EOF
+
+EXTERNAL_IP=$(gcloud compute instances describe ${instance} \
+  --format 'value(networkInterfaces[0].accessConfigs[0].natIP)')
+
+INTERNAL_IP=$(gcloud compute instances describe ${instance} \
+  --format 'value(networkInterfaces[0].networkIP)')
+
+cfssl gencert \
+  -ca=ca.pem \
+  -ca-key=ca-key.pem \
+  -config=ca-config.json \
+  -hostname=${instance},${EXTERNAL_IP},${INTERNAL_IP} \
+  -profile=kubernetes \
+  ${instance}-csr.json | cfssljson -bare ${instance}
+done
+```
+
+Результат:
+
+```console
+worker-0-key.pem
+worker-0.pem
+worker-1-key.pem
+worker-1.pem
+worker-2-key.pem
+worker-2.pem
+```
+
+##### Клиенский сертификат Controller Manager
+
+Создадим клиентский сертификат и закрытый ключ для `kube-controller-manager`:
+
+```console
+{
+
+cat > kube-controller-manager-csr.json <<EOF
+{
+  "CN": "system:kube-controller-manager",
+  "key": {
+    "algo": "rsa",
+    "size": 2048
+  },
+  "names": [
+    {
+      "C": "US",
+      "L": "Portland",
+      "O": "system:kube-controller-manager",
+      "OU": "Kubernetes The Hard Way",
+      "ST": "Oregon"
+    }
+  ]
+}
+EOF
+
+cfssl gencert \
+  -ca=ca.pem \
+  -ca-key=ca-key.pem \
+  -config=ca-config.json \
+  -profile=kubernetes \
+  kube-controller-manager-csr.json | cfssljson -bare kube-controller-manager
+
+}
+```
+
+Результат:
+
+```console
+kube-controller-manager-key.pem
+kube-controller-manager.pem
+```
+
+##### Клиенский сертификат Kube Proxy
+
+Создадим клиентский сертификат и закрытый ключ для `kube-proxy`:
+
+```console
+{
+
+cat > kube-proxy-csr.json <<EOF
+{
+  "CN": "system:kube-proxy",
+  "key": {
+    "algo": "rsa",
+    "size": 2048
+  },
+  "names": [
+    {
+      "C": "US",
+      "L": "Portland",
+      "O": "system:node-proxier",
+      "OU": "Kubernetes The Hard Way",
+      "ST": "Oregon"
+    }
+  ]
+}
+EOF
+
+cfssl gencert \
+  -ca=ca.pem \
+  -ca-key=ca-key.pem \
+  -config=ca-config.json \
+  -profile=kubernetes \
+  kube-proxy-csr.json | cfssljson -bare kube-proxy
+
+}
+```
+
+Результат:
+
+```console
+kube-proxy-key.pem
+kube-proxy.pem
+```
+
+##### Клиентский сертификат Scheduler
+
+Создадим клиентский сертификат и закрытый ключ для `kube-scheduler`:
+
+```console
+{
+
+cat > kube-scheduler-csr.json <<EOF
+{
+  "CN": "system:kube-scheduler",
+  "key": {
+    "algo": "rsa",
+    "size": 2048
+  },
+  "names": [
+    {
+      "C": "US",
+      "L": "Portland",
+      "O": "system:kube-scheduler",
+      "OU": "Kubernetes The Hard Way",
+      "ST": "Oregon"
+    }
+  ]
+}
+EOF
+
+cfssl gencert \
+  -ca=ca.pem \
+  -ca-key=ca-key.pem \
+  -config=ca-config.json \
+  -profile=kubernetes \
+  kube-scheduler-csr.json | cfssljson -bare kube-scheduler
+
+}
+```
+
+Результат:
+
+```console
+kube-scheduler-key.pem
+kube-scheduler.pem
+```
+
+##### Сертификат Kubernetes API Server
+
+Статический IP-адрес `kubernetes-the-hard-way` будет включен в список альтернативных имен субъектов для сертификата сервера Kubernetes API. Это гарантирует, что сертификат может быть проверен удаленными клиентами.
+
+Создадим сертификат сервера и закрытый ключ для Kubernetes API:
+
+```console
+{
+
+KUBERNETES_PUBLIC_ADDRESS=$(gcloud compute addresses describe kubernetes-the-hard-way \
+  --region $(gcloud config get-value compute/region) \
+  --format 'value(address)')
+
+KUBERNETES_HOSTNAMES=kubernetes,kubernetes.default,kubernetes.default.svc,kubernetes.default.svc.cluster,kubernetes.svc.cluster.local
+
+cat > kubernetes-csr.json <<EOF
+{
+  "CN": "kubernetes",
+  "key": {
+    "algo": "rsa",
+    "size": 2048
+  },
+  "names": [
+    {
+      "C": "US",
+      "L": "Portland",
+      "O": "Kubernetes",
+      "OU": "Kubernetes The Hard Way",
+      "ST": "Oregon"
+    }
+  ]
+}
+EOF
+
+cfssl gencert \
+  -ca=ca.pem \
+  -ca-key=ca-key.pem \
+  -config=ca-config.json \
+  -hostname=10.32.0.1,10.240.0.10,10.240.0.11,10.240.0.12,${KUBERNETES_PUBLIC_ADDRESS},127.0.0.1,${KUBERNETES_HOSTNAMES} \
+  -profile=kubernetes \
+  kubernetes-csr.json | cfssljson -bare kubernetes
+
+}
+```
+
+>Серверу API Kubernetes автоматически присваивается внутреннее DNS-имя `kubernetes`, которое будет связано с первым IP-адресом (`10.32.0.1`) из диапазона адресов (`10.32.0.0/24`), зарезервированного для внутренних сервисов кластера во время запуска управляющейго уровня.
+
+Результат:
+
+```console
+kubernetes-key.pem
+kubernetes.pem
+```
+
+##### Пара ключей Service Account
+
+Kubernetes Controller Manager использует пару ключей для создания и подписи токенов Service Account, как описано в документации [по управлению учетными записями сервисов](https://kubernetes.io/docs/admin/service-accounts-admin/).
+
+Создадим сертификат и закрытый ключ для `service-account`:
+
+```console
+{
+
+cat > service-account-csr.json <<EOF
+{
+  "CN": "service-accounts",
+  "key": {
+    "algo": "rsa",
+    "size": 2048
+  },
+  "names": [
+    {
+      "C": "US",
+      "L": "Portland",
+      "O": "Kubernetes",
+      "OU": "Kubernetes The Hard Way",
+      "ST": "Oregon"
+    }
+  ]
+}
+EOF
+
+cfssl gencert \
+  -ca=ca.pem \
+  -ca-key=ca-key.pem \
+  -config=ca-config.json \
+  -profile=kubernetes \
+  service-account-csr.json | cfssljson -bare service-account
+
+}
+```
+
+Результат:
+
+```console
+service-account-key.pem
+service-account.pem
+```
+
+##### Копирование сертификатов на ноды
+
+Скопируем соответствующие сертификаты и закрытые ключи на каждую рабочую ноду:
+
+```console
+for instance in worker-0 worker-1 worker-2; do
+  gcloud compute scp ca.pem ${instance}-key.pem ${instance}.pem ${instance}:~/
+done
+```
+
+Скопируем соответствующие сертификаты и закрытые ключи на каждую ноду контроллера:
+
+```console
+for instance in controller-0 controller-1 controller-2; do
+  gcloud compute scp ca.pem ca-key.pem kubernetes-key.pem kubernetes.pem \
+    service-account-key.pem service-account.pem ${instance}:~/
+done
+```
+
+>Клиентские сертификаты `kube-proxy`, `kube-controller-manager`, `kube-scheduler` и `kubelet` будут использоваться для создания файлов конфигурации аутентификации клиента далее.
+
+#### Создание конфигурационных файлов Kubernetes для аутентификации
+
+Далее мы создадим [файлы конфигурации Kubernetes](https://kubernetes.io/docs/concepts/configuration/organize-cluster-access-kubeconfig/), также известные как kubeconfigs, которые позволяют клиентам Kubernetes обнаруживать и проверять подлинность на серверах API Kubernetes.
+
+##### Конфигурации аутентификации клиента
+
+В этои разделе мы создадим файлы kubeconfig для `controller manager`, `kubelet`, `kube-proxy`, `scheduler clients` и пользователя `admin`.
+
+##### Публичный IP адрес Kubernetes
+
+Каждому kubeconfig требуется сервер API Kubernetes для подключения. Для обеспечения высокой доступности будет использоваться IP-адрес, назначенный нашему балансировщику нагрузки на серверах API Kubernetes.
+
+Получим статический IP-адрес `kubernetes-the-hard-way`:
+
+```console
+KUBERNETES_PUBLIC_ADDRESS=$(gcloud compute addresses describe kubernetes-the-hard-way \
+  --region $(gcloud config get-value compute/region) \
+  --format 'value(address)')
+```
+
+##### Файл конфигурации kubelet Kubernetes
+
+При создании файлов kubeconfig для Kubelets должен использоваться сертификат клиента, соответствующий имени узла Kubelet. Это обеспечит Kubelets надлежащую авторизацию [Node Authorizer](https://kubernetes.io/docs/admin/authorization/node/).
+
+Создадим файл kubeconfig для каждой рабочей ноды:
+
+```console
+for instance in worker-0 worker-1 worker-2; do
+  kubectl config set-cluster kubernetes-the-hard-way \
+    --certificate-authority=ca.pem \
+    --embed-certs=true \
+    --server=https://${KUBERNETES_PUBLIC_ADDRESS}:6443 \
+    --kubeconfig=${instance}.kubeconfig
+
+  kubectl config set-credentials system:node:${instance} \
+    --client-certificate=${instance}.pem \
+    --client-key=${instance}-key.pem \
+    --embed-certs=true \
+    --kubeconfig=${instance}.kubeconfig
+
+  kubectl config set-context default \
+    --cluster=kubernetes-the-hard-way \
+    --user=system:node:${instance} \
+    --kubeconfig=${instance}.kubeconfig
+
+  kubectl config use-context default --kubeconfig=${instance}.kubeconfig
+done
+```
+
+Результат:
+
+```console
+worker-0.kubeconfig
+worker-1.kubeconfig
+worker-2.kubeconfig
+```
+
+##### Файл конфигурации kube-proxy Kubernetes
+
+Создадим файл kubeconfig для `kube-proxy` сервиса:
+
+```console
+{
+  kubectl config set-cluster kubernetes-the-hard-way \
+    --certificate-authority=ca.pem \
+    --embed-certs=true \
+    --server=https://${KUBERNETES_PUBLIC_ADDRESS}:6443 \
+    --kubeconfig=kube-proxy.kubeconfig
+
+  kubectl config set-credentials system:kube-proxy \
+    --client-certificate=kube-proxy.pem \
+    --client-key=kube-proxy-key.pem \
+    --embed-certs=true \
+    --kubeconfig=kube-proxy.kubeconfig
+
+  kubectl config set-context default \
+    --cluster=kubernetes-the-hard-way \
+    --user=system:kube-proxy \
+    --kubeconfig=kube-proxy.kubeconfig
+
+  kubectl config use-context default --kubeconfig=kube-proxy.kubeconfig
+}
+```
+
+Результат:
+
+```console
+kube-proxy.kubeconfig
+```
+
+##### Файл конфигурации kube-controller-manager Kubernetes
+
+Создадим файл kubeconfig для `kube-controller-manager` сервиса:
+
+```console
+{
+  kubectl config set-cluster kubernetes-the-hard-way \
+    --certificate-authority=ca.pem \
+    --embed-certs=true \
+    --server=https://127.0.0.1:6443 \
+    --kubeconfig=kube-controller-manager.kubeconfig
+
+  kubectl config set-credentials system:kube-controller-manager \
+    --client-certificate=kube-controller-manager.pem \
+    --client-key=kube-controller-manager-key.pem \
+    --embed-certs=true \
+    --kubeconfig=kube-controller-manager.kubeconfig
+
+  kubectl config set-context default \
+    --cluster=kubernetes-the-hard-way \
+    --user=system:kube-controller-manager \
+    --kubeconfig=kube-controller-manager.kubeconfig
+
+  kubectl config use-context default --kubeconfig=kube-controller-manager.kubeconfig
+}
+```
+
+Результат:
+
+```console
+kube-controller-manager.kubeconfig
+```
+
+##### Файл конфигурации kube-scheduler Kubernetes
+
+Создадим файл kubeconfig для `kube-scheduler` сервиса:
+
+```console
+{
+  kubectl config set-cluster kubernetes-the-hard-way \
+    --certificate-authority=ca.pem \
+    --embed-certs=true \
+    --server=https://127.0.0.1:6443 \
+    --kubeconfig=kube-scheduler.kubeconfig
+
+  kubectl config set-credentials system:kube-scheduler \
+    --client-certificate=kube-scheduler.pem \
+    --client-key=kube-scheduler-key.pem \
+    --embed-certs=true \
+    --kubeconfig=kube-scheduler.kubeconfig
+
+  kubectl config set-context default \
+    --cluster=kubernetes-the-hard-way \
+    --user=system:kube-scheduler \
+    --kubeconfig=kube-scheduler.kubeconfig
+
+  kubectl config use-context default --kubeconfig=kube-scheduler.kubeconfig
+}
+```
+
+Результат:
+
+```console
+kube-scheduler.kubeconfig
+```
+
+##### Файл конфигурации пользователя admin
+
+Создадим файл kubeconfig для пользователя `admin`:
+
+```console
+{
+  kubectl config set-cluster kubernetes-the-hard-way \
+    --certificate-authority=ca.pem \
+    --embed-certs=true \
+    --server=https://127.0.0.1:6443 \
+    --kubeconfig=admin.kubeconfig
+
+  kubectl config set-credentials admin \
+    --client-certificate=admin.pem \
+    --client-key=admin-key.pem \
+    --embed-certs=true \
+    --kubeconfig=admin.kubeconfig
+
+  kubectl config set-context default \
+    --cluster=kubernetes-the-hard-way \
+    --user=admin \
+    --kubeconfig=admin.kubeconfig
+
+  kubectl config use-context default --kubeconfig=admin.kubeconfig
+}
+```
+
+Результат:
+
+```console
+admin.kubeconfig
+```
+
+##### Копирование конфигурационных файлов на ноды
+
+Скопируем соответствующие kubeconfig файлы `kubelet` и `kube-proxy` на каждую рабочую ноду:
+
+```console
+for instance in worker-0 worker-1 worker-2; do
+  gcloud compute scp ${instance}.kubeconfig kube-proxy.kubeconfig ${instance}:~/
+done
+```
+
+Скопируем соответствующие kubeconfig файлы `kube-controller-manager` и `kube-scheduler` на каждую ноду контроллера:
+
+```console
+for instance in controller-0 controller-1 controller-2; do
+  gcloud compute scp admin.kubeconfig kube-controller-manager.kubeconfig kube-scheduler.kubeconfig ${instance}:~/
+done
+```
+
+#### Создание конфигурации шифрования данных и ключа
+
+Kubernetes хранит различные данные, включая состояние кластера, конфигурации приложений и секреты. Kubernetes поддерживает возможность [шифрования](https://kubernetes.io/docs/tasks/administer-cluster/encrypt-data) данных кластера в состоянии покоя.
+
+Далее мы создадим ключ шифрования и [конфигурацию шифрования](https://kubernetes.io/docs/tasks/administer-cluster/encrypt-data/#understanding-the-encryption-at-rest-configuration), подходящую для шифрования секретов Kubernetes.
+
+##### Ключ шифрования
+
+Создадим ключа шифрования:
+
+```console
+ENCRYPTION_KEY=$(head -c 32 /dev/urandom | base64)
+```
+
+#### Файл конфигурации шифрования
+
+Создадим файл конфигурации `encryption-config.yaml`:
+
+```console
+cat > encryption-config.yaml <<EOF
+kind: EncryptionConfig
+apiVersion: v1
+resources:
+  - resources:
+      - secrets
+    providers:
+      - aescbc:
+          keys:
+            - name: key1
+              secret: ${ENCRYPTION_KEY}
+      - identity: {}
+EOF
+```
+
+Скопируем файлы конфигурации шифровния `encryption-config.yaml` на каждую ноду контроллера:
+
+```console
+for instance in controller-0 controller-1 controller-2; do
+  gcloud compute scp encryption-config.yaml ${instance}:~/
+done
+```
+
+#### Запуск кластера etcd
+
+Компоненты Kubernetes не имеют состояния и хранят состояние кластера в [etcd.](https://github.com/etcd-io/etcd) Далее мы запустим кластер с тремя etcd нодами и настроим его для обеспечения высокой доступности и безопасного удаленного доступа.
+
+Подготовка
+
+Далее мы должны выполнить команды на каждой ноде контроллера: `controller-0`, `controller-1` и `controller-2`. Зайдем на каждую ноду контроллера с помощью команды `gcloud`. Пример:
+
+```console
+gcloud compute ssh controller-0
+```
+
+- tmux
+
+##### Загрузим и установим бинарники [etcd](https://github.com/etcd-io/etcd)
+
+```console
+wget -q --show-progress --https-only --timestamping \
+  "https://github.com/etcd-io/etcd/releases/download/v3.4.0/etcd-v3.4.0-linux-amd64.tar.gz"
+```
+
+Извлечем и установим `etcd` и утилиту командной строки `etcdctl`:
+
+```console
+{
+  tar -xvf etcd-v3.4.0-linux-amd64.tar.gz
+  sudo mv etcd-v3.4.0-linux-amd64/etcd* /usr/local/bin/
+}
+```
+
+##### Настроим etcd
+
+```console
+{
+  sudo mkdir -p /etc/etcd /var/lib/etcd
+  sudo cp ca.pem kubernetes-key.pem kubernetes.pem /etc/etcd/
+}
+```
+
+Внутренний IP-адрес VM будет использоваться для обслуживания клиентских запросов и связи с одноранговыми кластерами etcd. Получим внутренний IP-адрес для текущей VM:
+
+```console
+INTERNAL_IP=$(curl -s -H "Metadata-Flavor: Google" \
+  http://metadata.google.internal/computeMetadata/v1/instance/network-interfaces/0/ip)
+```
+
+Каждый участник etcd должен иметь уникальное имя в кластере etcd. Установим имя etcd в соответствии с именем хоста текущей VM:
+
+```console
+ETCD_NAME=$(hostname -s)
+```
+
+Создадим `etcd.service` system unit файл:
+
+```console
+cat <<EOF | sudo tee /etc/systemd/system/etcd.service
+[Unit]
+Description=etcd
+Documentation=https://github.com/coreos
+
+[Service]
+Type=notify
+ExecStart=/usr/local/bin/etcd \\
+  --name ${ETCD_NAME} \\
+  --cert-file=/etc/etcd/kubernetes.pem \\
+  --key-file=/etc/etcd/kubernetes-key.pem \\
+  --peer-cert-file=/etc/etcd/kubernetes.pem \\
+  --peer-key-file=/etc/etcd/kubernetes-key.pem \\
+  --trusted-ca-file=/etc/etcd/ca.pem \\
+  --peer-trusted-ca-file=/etc/etcd/ca.pem \\
+  --peer-client-cert-auth \\
+  --client-cert-auth \\
+  --initial-advertise-peer-urls https://${INTERNAL_IP}:2380 \\
+  --listen-peer-urls https://${INTERNAL_IP}:2380 \\
+  --listen-client-urls https://${INTERNAL_IP}:2379,https://127.0.0.1:2379 \\
+  --advertise-client-urls https://${INTERNAL_IP}:2379 \\
+  --initial-cluster-token etcd-cluster-0 \\
+  --initial-cluster controller-0=https://10.240.0.10:2380,controller-1=https://10.240.0.11:2380,controller-2=https://10.240.0.12:2380 \\
+  --initial-cluster-state new \\
+  --data-dir=/var/lib/etcd
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+EOF
+```
+
+##### Стартуем etcd
+
+```console
+{
+  sudo systemctl daemon-reload
+  sudo systemctl enable etcd
+  sudo systemctl start etcd
+}
+```
+
+- Проверка
+
+Вывод списка участников кластера:
+
+```console
+sudo ETCDCTL_API=3 etcdctl member list \
+  --endpoints=https://127.0.0.1:2379 \
+  --cacert=/etc/etcd/ca.pem \
+  --cert=/etc/etcd/kubernetes.pem \
+  --key=/etc/etcd/kubernetes-key.pem
+
+3a57933972cb5131, started, controller-2, https://10.240.0.12:2380, https://10.240.0.12:2379
+f98dc20bce6225a0, started, controller-0, https://10.240.0.10:2380, https://10.240.0.10:2379
+ffed16798470cab5, started, controller-1, https://10.240.0.11:2380, https://10.240.0.11:2379
+```
+
+#### Запуск управлящего уровня Kubernetes
+
+Далее мы запустим управляющий уровень Kubernetes на трех VM и сконфигурируем их для высокой доступности. Мы также создадим внешний балансировщик нагрузки, который предоставляет доступ к серверам API Kubernetes для удаленных клиентов. На каждой ноде будут установлены следующие компоненты: Kubernetes API Server, Scheduler и Controller Manager.
+
+Подготовка
+
+В этом разделе мы должны выполнить команды на каждой ноде контроллера: `controller-0`, `controller-1` и `controller-2`. Зайдем на каждую ноду контроллера с помощью команды `gcloud`. Пример:
+
+```console
+gcloud compute ssh controller-0
+```
+
+- tmux
+
+##### Предоставление управляющего уровня
+
+Создадим директории для конфигурации Kubernetes:
+
+```console
+sudo mkdir -p /etc/kubernetes/config
+```
+
+##### Загрузиим и установим бинарники Kubernetes Controller
+
+```console
+wget -q --show-progress --https-only --timestamping \
+  "https://storage.googleapis.com/kubernetes-release/release/v1.15.3/bin/linux/amd64/kube-apiserver" \
+  "https://storage.googleapis.com/kubernetes-release/release/v1.15.3/bin/linux/amd64/kube-controller-manager" \
+  "https://storage.googleapis.com/kubernetes-release/release/v1.15.3/bin/linux/amd64/kube-scheduler" \
+  "https://storage.googleapis.com/kubernetes-release/release/v1.15.3/bin/linux/amd64/kubectl"
+```
+
+Установим бинарники:
+
+```console
+{
+  chmod +x kube-apiserver kube-controller-manager kube-scheduler kubectl
+  sudo mv kube-apiserver kube-controller-manager kube-scheduler kubectl /usr/local/bin/
+}
+```
+
+##### Настроим Kubernetes API Server
+
+```console
+{
+  sudo mkdir -p /var/lib/kubernetes/
+
+  sudo mv ca.pem ca-key.pem kubernetes-key.pem kubernetes.pem \
+    service-account-key.pem service-account.pem \
+    encryption-config.yaml /var/lib/kubernetes/
+}
+```
+
+Внутренний IP-адрес VM будет использоваться для объявления API серверу участника кластера. Получим внутренний IP-адрес для текущей VM:
+
+```console
+INTERNAL_IP=$(curl -s -H "Metadata-Flavor: Google" \
+  http://metadata.google.internal/computeMetadata/v1/instance/network-interfaces/0/ip)
+```
+
+Создадим `kube-apiserver.service` system unit файл:
+
+```console
+cat <<EOF | sudo tee /etc/systemd/system/kube-apiserver.service
+[Unit]
+Description=Kubernetes API Server
+Documentation=https://github.com/kubernetes/kubernetes
+
+[Service]
+ExecStart=/usr/local/bin/kube-apiserver \\
+  --advertise-address=${INTERNAL_IP} \\
+  --allow-privileged=true \\
+  --apiserver-count=3 \\
+  --audit-log-maxage=30 \\
+  --audit-log-maxbackup=3 \\
+  --audit-log-maxsize=100 \\
+  --audit-log-path=/var/log/audit.log \\
+  --authorization-mode=Node,RBAC \\
+  --bind-address=0.0.0.0 \\
+  --client-ca-file=/var/lib/kubernetes/ca.pem \\
+  --enable-admission-plugins=NamespaceLifecycle,NodeRestriction,LimitRanger,ServiceAccount,DefaultStorageClass,ResourceQuota \\
+  --etcd-cafile=/var/lib/kubernetes/ca.pem \\
+  --etcd-certfile=/var/lib/kubernetes/kubernetes.pem \\
+  --etcd-keyfile=/var/lib/kubernetes/kubernetes-key.pem \\
+  --etcd-servers=https://10.240.0.10:2379,https://10.240.0.11:2379,https://10.240.0.12:2379 \\
+  --event-ttl=1h \\
+  --encryption-provider-config=/var/lib/kubernetes/encryption-config.yaml \\
+  --kubelet-certificate-authority=/var/lib/kubernetes/ca.pem \\
+  --kubelet-client-certificate=/var/lib/kubernetes/kubernetes.pem \\
+  --kubelet-client-key=/var/lib/kubernetes/kubernetes-key.pem \\
+  --kubelet-https=true \\
+  --runtime-config=api/all \\
+  --service-account-key-file=/var/lib/kubernetes/service-account.pem \\
+  --service-cluster-ip-range=10.32.0.0/24 \\
+  --service-node-port-range=30000-32767 \\
+  --tls-cert-file=/var/lib/kubernetes/kubernetes.pem \\
+  --tls-private-key-file=/var/lib/kubernetes/kubernetes-key.pem \\
+  --v=2
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+EOF
+```
+
+##### Настроим Kubernetes Controller Manager
+
+Переместим `kube-controller-manager` kubeconfig:
+
+```console
+sudo mv kube-controller-manager.kubeconfig /var/lib/kubernetes/
+```
+
+Создадим `kube-controller-manager.service` system unit файл:
+
+```console
+cat <<EOF | sudo tee /etc/systemd/system/kube-controller-manager.service
+[Unit]
+Description=Kubernetes Controller Manager
+Documentation=https://github.com/kubernetes/kubernetes
+
+[Service]
+ExecStart=/usr/local/bin/kube-controller-manager \\
+  --address=0.0.0.0 \\
+  --cluster-cidr=10.200.0.0/16 \\
+  --cluster-name=kubernetes \\
+  --cluster-signing-cert-file=/var/lib/kubernetes/ca.pem \\
+  --cluster-signing-key-file=/var/lib/kubernetes/ca-key.pem \\
+  --kubeconfig=/var/lib/kubernetes/kube-controller-manager.kubeconfig \\
+  --leader-elect=true \\
+  --root-ca-file=/var/lib/kubernetes/ca.pem \\
+  --service-account-private-key-file=/var/lib/kubernetes/service-account-key.pem \\
+  --service-cluster-ip-range=10.32.0.0/24 \\
+  --use-service-account-credentials=true \\
+  --v=2
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+EOF
+```
+
+##### Настроим Kubernetes Scheduler
+
+Переместим `kube-scheduler` kubeconfig:
+
+```console
+sudo mv kube-scheduler.kubeconfig /var/lib/kubernetes/
+```
+
+Создадим файл конфигурации `kube-scheduler.yaml`:
+
+```console
+cat <<EOF | sudo tee /etc/kubernetes/config/kube-scheduler.yaml
+apiVersion: kubescheduler.config.k8s.io/v1alpha1
+kind: KubeSchedulerConfiguration
+clientConnection:
+  kubeconfig: "/var/lib/kubernetes/kube-scheduler.kubeconfig"
+leaderElection:
+  leaderElect: true
+EOF
+```
+
+Создадим `kube-scheduler.service` system unit файл:
+
+```console
+cat <<EOF | sudo tee /etc/systemd/system/kube-scheduler.service
+[Unit]
+Description=Kubernetes Scheduler
+Documentation=https://github.com/kubernetes/kubernetes
+
+[Service]
+ExecStart=/usr/local/bin/kube-scheduler \\
+  --config=/etc/kubernetes/config/kube-scheduler.yaml \\
+  --v=2
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+EOF
+```
+
+##### Запустим Controller Services
+
+```console
+{
+  sudo systemctl daemon-reload
+  sudo systemctl enable kube-apiserver kube-controller-manager kube-scheduler
+  sudo systemctl start kube-apiserver kube-controller-manager kube-scheduler
+}
+```
+
+>Подождем 10 секунд для полной инициализации Kubernetes API Server.
+
+##### Включим HTTP Health Checks
+
+[Балансировщик сетевой нагрузки Google](https://cloud.google.com/compute/docs/load-balancing/network) будет использоваться для распределения трафика между тремя API-серверами и позволит каждому API-серверу завершать соединения TLS и проверять сертификаты клиентов. Балансировщик сетевой нагрузки поддерживает только проверки работоспособности HTTP, что означает, что конечная точка HTTPS, предоставляемая сервером API, не может использоваться. В качестве обходного пути можно использовать веб-сервер nginx для проверки работоспособности HTTP-прокси. В этом разделе будет установлен и настроен nginx для принятия проверок состояния HTTP на порт 80 и прокси-соединений к серверу API по адресу `https://127.0.0.1:6443/healthz`.
+
+>Конечная точка `/healthz` API сервера не требует аутентификации по умолчанию.
+
+Установим простой веб-сервер для обработки проверок состояния HTTP:
+
+```console
+sudo apt-get update
+sudo apt-get install -y nginx
+
+cat > kubernetes.default.svc.cluster.local <<EOF
+server {
+  listen      80;
+  server_name kubernetes.default.svc.cluster.local;
+
+  location /healthz {
+     proxy_pass                    https://127.0.0.1:6443/healthz;
+     proxy_ssl_trusted_certificate /var/lib/kubernetes/ca.pem;
+  }
+}
+EOF
+
+{
+  sudo mv kubernetes.default.svc.cluster.local \
+    /etc/nginx/sites-available/kubernetes.default.svc.cluster.local
+
+  sudo ln -s /etc/nginx/sites-available/kubernetes.default.svc.cluster.local /etc/nginx/sites-enabled/
+}
+
+sudo systemctl restart nginx
+sudo systemctl enable nginx
+```
+
+- Проверка
+
+```console
+kubectl get componentstatuses --kubeconfig admin.kubeconfig
+
+NAME                 STATUS    MESSAGE              ERROR
+controller-manager   Healthy   ok
+scheduler            Healthy   ok
+etcd-2               Healthy   {"health": "true"}
+etcd-0               Healthy   {"health": "true"}
+etcd-1               Healthy   {"health": "true"}
+```
+
+Проверим nginx HTTP healthcheck proxy:
+
+```console
+curl -H "Host: kubernetes.default.svc.cluster.local" -i http://127.0.0.1/healthz
+
+HTTP/1.1 200 OK
+Server: nginx/1.14.0 (Ubuntu)
+Date: Sat, 14 Sep 2019 18:34:11 GMT
+Content-Type: text/plain; charset=utf-8
+Content-Length: 2
+Connection: keep-alive
+X-Content-Type-Options: nosniff
+
+ok
+```
+
+- RBAC для авторизации Kubelet
+
+Далее мы настроим разрешения RBAC, чтобы позволить серверу API Kubernetes получать доступ к API Kubelet на каждой рабочей ноде. Доступ к API Kubelet необходим для получения метрик, журналов и выполнения команд в pods.
+
+>В нашем случае установлен флаг Kubelet `--authorization-mode` в `Webhook`. В режиме Webhook используется [SubjectAccessReview](https://kubernetes.io/docs/admin/authorization/#checking-api-access) API для определения авторизации.
+
+Выполняем команды только на одном контроллере:
+
+```console
+gcloud compute ssh controller-0
+```
+
+Создадим `system:kube-apiserver-to-kubelet` [ClusterRole](https://kubernetes.io/docs/admin/authorization/rbac/#role-and-clusterrole) с разрешениями для доступа к API Kubelet и выполнения наиболее распространенных задач, связанных с управлением pods:
+
+```console
+cat <<EOF | kubectl apply --kubeconfig admin.kubeconfig -f -
+apiVersion: rbac.authorization.k8s.io/v1beta1
+kind: ClusterRole
+metadata:
+  annotations:
+    rbac.authorization.kubernetes.io/autoupdate: "true"
+  labels:
+    kubernetes.io/bootstrapping: rbac-defaults
+  name: system:kube-apiserver-to-kubelet
+rules:
+  - apiGroups:
+      - ""
+    resources:
+      - nodes/proxy
+      - nodes/stats
+      - nodes/log
+      - nodes/spec
+      - nodes/metrics
+    verbs:
+      - "*"
+EOF
+```
+
+Kubernetes API Server аутентифицируется в Kubelet как пользователь `kubernetes`, используя сертификат клиента, как определено флагом `--kubelet-client-certificate`.
+
+Свяжем `system:kube-apiserver-to-kubelet` ClusterRole с пользователем `kubernetes`:
+
+```console
+cat <<EOF | kubectl apply --kubeconfig admin.kubeconfig -f -
+apiVersion: rbac.authorization.k8s.io/v1beta1
+kind: ClusterRoleBinding
+metadata:
+  name: system:kube-apiserver
+  namespace: ""
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: system:kube-apiserver-to-kubelet
+subjects:
+  - apiGroup: rbac.authorization.k8s.io
+    kind: User
+    name: kubernetes
+EOF
+```
+
+##### Балансер нагрузки внешнего интерфейса Kubernetes
+
+Далее мы предоставим внешний балансировщик нагрузки для фронта серверов Kubernetes API. Статический IP-адрес `kubernetes-the-hard-way` будет привязан к результирующему балансировщику нагрузки.
+
+- Выполним следующие команды с того же компьютера, который использовался для создания VM
+
+##### Предоставим сетевой балансировщик нагрузки
+
+Создадим external load balancer network resources:
+
+```console
+{
+  KUBERNETES_PUBLIC_ADDRESS=$(gcloud compute addresses describe kubernetes-the-hard-way \
+    --region $(gcloud config get-value compute/region) \
+    --format 'value(address)')
+
+  gcloud compute http-health-checks create kubernetes \
+    --description "Kubernetes Health Check" \
+    --host "kubernetes.default.svc.cluster.local" \
+    --request-path "/healthz"
+
+  gcloud compute firewall-rules create kubernetes-the-hard-way-allow-health-check \
+    --network kubernetes-the-hard-way \
+    --source-ranges 209.85.152.0/22,209.85.204.0/22,35.191.0.0/16 \
+    --allow tcp
+
+  gcloud compute target-pools create kubernetes-target-pool \
+    --http-health-check kubernetes
+
+  gcloud compute target-pools add-instances kubernetes-target-pool \
+   --instances controller-0,controller-1,controller-2
+
+  gcloud compute forwarding-rules create kubernetes-forwarding-rule \
+    --address ${KUBERNETES_PUBLIC_ADDRESS} \
+    --ports 6443 \
+    --region $(gcloud config get-value compute/region) \
+    --target-pool kubernetes-target-pool
+}
+```
+
+- Проверка
+
+Получим статический IP-адрес `kubernetes-the-hard-way`:
+
+```console
+KUBERNETES_PUBLIC_ADDRESS=$(gcloud compute addresses describe kubernetes-the-hard-way \
+  --region $(gcloud config get-value compute/region) \
+  --format 'value(address)')
+```
+
+Выполним HTTP запрос для получения информации о версии Kubernetes:
+
+```console
+curl --cacert ca.pem https://${KUBERNETES_PUBLIC_ADDRESS}:6443/version
+
+{
+  "major": "1",
+  "minor": "15",
+  "gitVersion": "v1.15.3",
+  "gitCommit": "2d3c76f9091b6bec110a5e63777c332469e0cba2",
+  "gitTreeState": "clean",
+  "buildDate": "2019-08-19T11:05:50Z",
+  "goVersion": "go1.12.9",
+  "compiler": "gc",
+  "platform": "linux/amd64"
+}
+```
+
+#### Запуск рабочих нод Kubernetes
+
+Далее мы запустим три рабочих ноды Kubernetes. Следующие компоненты будут установлены на каждом узле: [runc](https://github.com/opencontainers/runc), [container networking plugins](https://github.com/containernetworking/cni), [containerd](https://github.com/containerd/containerd), [kubelet](https://kubernetes.io/docs/admin/kubelet) и [kube-proxy](https://kubernetes.io/docs/concepts/cluster-administration/proxies).
+
+- Подготовка
+
+Далее мы должны выполнить команды на каждой рабочей ноде: `worker-0`, `worker-1` и `worker-2`. Зайдем на каждую рабочую ноду с помощью команды `gcloud`. Пример:
+
+```console
+gcloud compute ssh worker-0
+```
+
+- tmux
+
+##### Предоставление рабочей ноды Kubernetes
+
+Устанавливаем зависимости:
+
+```console
+{
+  sudo apt-get update
+  sudo apt-get -y install socat conntrack ipset
+}
+```
+
+>Бинарный файл socat включает поддержку команды `kubectl port-forward`.
+
+##### Отключаем swap
+
+По умолчанию kubelet не запустится, если включен [swap](https://help.ubuntu.com/community/SwapFaq). [Рекомендуется](https://github.com/kubernetes/kubernetes/issues/7294) отключить swap, чтобы Kubernetes мог обеспечить правильное распределение ресурсов и качество обслуживания.
+
+Проверим что swap включен:
+
+```console
+sudo swapon --show
+```
+
+Если вывод пуст, то swap не включен. Если swap включен, выполним следующую команду, чтобы немедленно отключить swap:
+
+```console
+sudo swapoff -a
+```
+
+>Чтобы swap остался выключенным после перезагрузки, обратимся к документации по дистрибутиву Linux
+
+##### Скачиваем и устанавливаем бинарники рабочих нод
+
+```console
+wget -q --show-progress --https-only --timestamping \
+  https://github.com/kubernetes-sigs/cri-tools/releases/download/v1.15.0/crictl-v1.15.0-linux-amd64.tar.gz \
+  https://github.com/opencontainers/runc/releases/download/v1.0.0-rc8/runc.amd64 \
+  https://github.com/containernetworking/plugins/releases/download/v0.8.2/cni-plugins-linux-amd64-v0.8.2.tgz \
+  https://github.com/containerd/containerd/releases/download/v1.2.9/containerd-1.2.9.linux-amd64.tar.gz \
+  https://storage.googleapis.com/kubernetes-release/release/v1.15.3/bin/linux/amd64/kubectl \
+  https://storage.googleapis.com/kubernetes-release/release/v1.15.3/bin/linux/amd64/kube-proxy \
+  https://storage.googleapis.com/kubernetes-release/release/v1.15.3/bin/linux/amd64/kubelet
+```
+
+Создаем установочные директории:
+
+```console
+sudo mkdir -p \
+  /etc/cni/net.d \
+  /opt/cni/bin \
+  /var/lib/kubelet \
+  /var/lib/kube-proxy \
+  /var/lib/kubernetes \
+  /var/run/kubernetes
+```
+
+Устанавливаем бинарники:
+
+```console
+{
+  mkdir containerd
+  tar -xvf crictl-v1.15.0-linux-amd64.tar.gz
+  tar -xvf containerd-1.2.9.linux-amd64.tar.gz -C containerd
+  sudo tar -xvf cni-plugins-linux-amd64-v0.8.2.tgz -C /opt/cni/bin/
+  sudo mv runc.amd64 runc
+  chmod +x crictl kubectl kube-proxy kubelet runc
+  sudo mv crictl kubectl kube-proxy kubelet runc /usr/local/bin/
+  sudo mv containerd/bin/* /bin/
+}
+```
+
+##### Настройка Container Networking Interface
+
+Получим диапазон Pod CIDR для текущей VM:
+
+```console
+POD_CIDR=$(curl -s -H "Metadata-Flavor: Google" \
+  http://metadata.google.internal/computeMetadata/v1/instance/attributes/pod-cidr)
+```
+
+Создадим файл конфигурации для `bridge`:
+
+```console
+cat <<EOF | sudo tee /etc/cni/net.d/10-bridge.conf
+{
+    "cniVersion": "0.3.1",
+    "name": "bridge",
+    "type": "bridge",
+    "bridge": "cnio0",
+    "isGateway": true,
+    "ipMasq": true,
+    "ipam": {
+        "type": "host-local",
+        "ranges": [
+          [{"subnet": "${POD_CIDR}"}]
+        ],
+        "routes": [{"dst": "0.0.0.0/0"}]
+    }
+}
+EOF
+```
+
+Создадим файл конфигурации для `loopback`:
+
+```console
+cat <<EOF | sudo tee /etc/cni/net.d/99-loopback.conf
+{
+    "cniVersion": "0.3.1",
+    "name": "lo",
+    "type": "loopback"
+}
+EOF
+```
+
+##### Настроим containerd
+
+Создадим файл конфигурации `containerd`:
+
+```console
+sudo mkdir -p /etc/containerd/
+
+cat << EOF | sudo tee /etc/containerd/config.toml
+[plugins]
+  [plugins.cri.containerd]
+    snapshotter = "overlayfs"
+    [plugins.cri.containerd.default_runtime]
+      runtime_type = "io.containerd.runtime.v1.linux"
+      runtime_engine = "/usr/local/bin/runc"
+      runtime_root = ""
+EOF
+```
+
+Создадим `containerd.service` system unit файл:
+
+```console
+cat <<EOF | sudo tee /etc/systemd/system/containerd.service
+[Unit]
+Description=containerd container runtime
+Documentation=https://containerd.io
+After=network.target
+
+[Service]
+ExecStartPre=/sbin/modprobe overlay
+ExecStart=/bin/containerd
+Restart=always
+RestartSec=5
+Delegate=yes
+KillMode=process
+OOMScoreAdjust=-999
+LimitNOFILE=1048576
+LimitNPROC=infinity
+LimitCORE=infinity
+
+[Install]
+WantedBy=multi-user.target
+EOF
+```
+
+##### Настроим Kubelet
+
+```console
+{
+  sudo mv ${HOSTNAME}-key.pem ${HOSTNAME}.pem /var/lib/kubelet/
+  sudo mv ${HOSTNAME}.kubeconfig /var/lib/kubelet/kubeconfig
+  sudo mv ca.pem /var/lib/kubernetes/
+}
+```
+
+Создадим файл конфигурации `kubelet-config.yaml`:
+
+```console
+cat <<EOF | sudo tee /var/lib/kubelet/kubelet-config.yaml
+kind: KubeletConfiguration
+apiVersion: kubelet.config.k8s.io/v1beta1
+authentication:
+  anonymous:
+    enabled: false
+  webhook:
+    enabled: true
+  x509:
+    clientCAFile: "/var/lib/kubernetes/ca.pem"
+authorization:
+  mode: Webhook
+clusterDomain: "cluster.local"
+clusterDNS:
+  - "10.32.0.10"
+podCIDR: "${POD_CIDR}"
+resolvConf: "/run/systemd/resolve/resolv.conf"
+runtimeRequestTimeout: "15m"
+tlsCertFile: "/var/lib/kubelet/${HOSTNAME}.pem"
+tlsPrivateKeyFile: "/var/lib/kubelet/${HOSTNAME}-key.pem"
+EOF
+```
+
+>Конфигурация `resolvConf` используется, чтобы избежать петель при использовании CoreDNS для service discovery в системах с запущенным `systemd-resolved`.
+
+Создадим `kubelet.service` system unit файл:
+
+```console
+cat <<EOF | sudo tee /etc/systemd/system/kubelet.service
+[Unit]
+Description=Kubernetes Kubelet
+Documentation=https://github.com/kubernetes/kubernetes
+After=containerd.service
+Requires=containerd.service
+
+[Service]
+ExecStart=/usr/local/bin/kubelet \\
+  --config=/var/lib/kubelet/kubelet-config.yaml \\
+  --container-runtime=remote \\
+  --container-runtime-endpoint=unix:///var/run/containerd/containerd.sock \\
+  --image-pull-progress-deadline=2m \\
+  --kubeconfig=/var/lib/kubelet/kubeconfig \\
+  --network-plugin=cni \\
+  --register-node=true \\
+  --v=2
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+EOF
+```
+
+##### Настроим Kubernetes Proxy
+
+```console
+sudo mv kube-proxy.kubeconfig /var/lib/kube-proxy/kubeconfig
+```
+
+Создадим файл конфигурации `kube-proxy-config.yaml`:
+
+```console
+cat <<EOF | sudo tee /var/lib/kube-proxy/kube-proxy-config.yaml
+kind: KubeProxyConfiguration
+apiVersion: kubeproxy.config.k8s.io/v1alpha1
+clientConnection:
+  kubeconfig: "/var/lib/kube-proxy/kubeconfig"
+mode: "iptables"
+clusterCIDR: "10.200.0.0/16"
+EOF
+```
+
+Создадим `kube-proxy.service` system unit файл:
+
+```console
+cat <<EOF | sudo tee /etc/systemd/system/kube-proxy.service
+[Unit]
+Description=Kubernetes Kube Proxy
+Documentation=https://github.com/kubernetes/kubernetes
+
+[Service]
+ExecStart=/usr/local/bin/kube-proxy \\
+  --config=/var/lib/kube-proxy/kube-proxy-config.yaml
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+EOF
+```
+
+##### Запустим сервисы
+
+```console
+{
+  sudo systemctl daemon-reload
+  sudo systemctl enable containerd kubelet kube-proxy
+  sudo systemctl start containerd kubelet kube-proxy
+}
+```
+
+- Проверка
+
+- Выполним следующие команды с того же компьютера, который использовался для создания VM
+
+Вывод списка рабочих нод Kubernetes:
+
+```console
+gcloud compute ssh controller-0 \
+  --command "kubectl get nodes --kubeconfig admin.kubeconfig"
+
+NAME       STATUS   ROLES    AGE   VERSION
+worker-0   Ready    <none>   15s   v1.15.3
+worker-1   Ready    <none>   15s   v1.15.3
+worker-2   Ready    <none>   15s   v1.15.3
+```
+
+#### Настройка kubectl для удаленного доступа
+
+Далее мы создадим файл kubeconfig для утилиты командной строки `kubectl` на основе учетных данных пользователя `admin`.
+
+##### Файл конфигурации для пользователя admin
+
+Каждому kubeconfig требуется сервер API Kubernetes для подключения. Для обеспечения высокой доступности будет использоваться IP-адрес, назначенный внешнему балансировщику нагрузки на серверах API Kubernetes.
+
+Сгенерируем файл kubeconfig, подходящий для аутентификации пользователя как `admin`:
+
+```console
+{
+  KUBERNETES_PUBLIC_ADDRESS=$(gcloud compute addresses describe kubernetes-the-hard-way \
+    --region $(gcloud config get-value compute/region) \
+    --format 'value(address)')
+
+  kubectl config set-cluster kubernetes-the-hard-way \
+    --certificate-authority=ca.pem \
+    --embed-certs=true \
+    --server=https://${KUBERNETES_PUBLIC_ADDRESS}:6443
+
+  kubectl config set-credentials admin \
+    --client-certificate=admin.pem \
+    --client-key=admin-key.pem
+
+  kubectl config set-context kubernetes-the-hard-way \
+    --cluster=kubernetes-the-hard-way \
+    --user=admin
+
+  kubectl config use-context kubernetes-the-hard-way
+}
+```
+
+- Проверка
+
+Проверим работоспособность удаленного кластера Kubernetes:
+
+```console
+kubectl get componentstatuses
+
+NAME                 STATUS    MESSAGE             ERROR
+controller-manager   Healthy   ok
+scheduler            Healthy   ok
+etcd-1               Healthy   {"health":"true"}
+etcd-2               Healthy   {"health":"true"}
+etcd-0               Healthy   {"health":"true"}
+```
+
+Получим список рабочих нод удаленного кластера Kubernetes:
+
+```console
+kubectl get nodes
+
+NAME       STATUS   ROLES    AGE    VERSION
+worker-0   Ready    <none>   2m9s   v1.15.3
+worker-1   Ready    <none>   2m9s   v1.15.3
+worker-2   Ready    <none>   2m9s   v1.15.3
+```
+
+#### Предоставление сетевых маршрутов Pod
+
+Pods, запланированные для ноды, получают IP-адрес из Pod CIDR диапазона ноды. На этом этапе pods не могут связываться с другими pods, работающими на разных нодах из-за отсутствия сетевых [маршрутов](https://cloud.google.com/compute/docs/vpc/routes).
+
+Далее мы создадим маршрут для каждой рабочей ноды, который сопоставляет диапазон Pod CIDR узла с внутренним IP-адресом ноды.
+
+> Также есть и [другие способы](https://kubernetes.io/docs/concepts/cluster-administration/networking/#how-to-achieve-this) реализации сетевой модели Kubernetes.
+
+##### Таблица маршрутизации
+
+В данном разделе мы соберете информацию, необходимую для создания маршрутов в сети VPC `kubernetes-the-hard-way`.
+
+Получим внутренний IP-адрес и диапазон Pod CIDR для каждого рабочей ноды:
+
+```console
+for instance in worker-0 worker-1 worker-2; do
+  gcloud compute instances describe ${instance} \
+    --format 'value[separator=" "](networkInterfaces[0].networkIP,metadata.items[0].value)'
+done
+
+10.240.0.20 10.200.0.0/24
+10.240.0.21 10.200.1.0/24
+10.240.0.22 10.200.2.0/24
+```
+
+##### Маршруты
+
+Создадим сетевые маршруты для каждой рабочей ноды:
+
+```console
+for i in 0 1 2; do
+  gcloud compute routes create kubernetes-route-10-200-${i}-0-24 \
+    --network kubernetes-the-hard-way \
+    --next-hop-address 10.240.0.2${i} \
+    --destination-range 10.200.${i}.0/24
+done
+```
+
+Получим список маршрутов в сети VPC `kubernetes-the-hard-way`:
+
+```console
+gcloud compute routes list --filter "network: kubernetes-the-hard-way"
+
+NAME                            NETWORK                  DEST_RANGE     NEXT_HOP                  PRIORITY
+default-route-081879136902de56  kubernetes-the-hard-way  10.240.0.0/24  kubernetes-the-hard-way   1000
+default-route-55199a5aa126d7aa  kubernetes-the-hard-way  0.0.0.0/0      default-internet-gateway  1000
+kubernetes-route-10-200-0-0-24  kubernetes-the-hard-way  10.200.0.0/24  10.240.0.20               1000
+kubernetes-route-10-200-1-0-24  kubernetes-the-hard-way  10.200.1.0/24  10.240.0.21               1000
+kubernetes-route-10-200-2-0-24  kubernetes-the-hard-way  10.200.2.0/24  10.240.0.22               1000
+```
+
+#### Развертывание надстройки DNS кластера
+
+Далее мы развернем [надстройку DNS](https://kubernetes.io/docs/concepts/services-networking/dns-pod-service/), которая обеспечивает DNS service discovery на основе [CoreDNS](https://coredns.io/), для приложений работающих в кластере Kubernetes.
+
+##### Надстройка DNS-кластера
+
+Развертывание надстройки кластера `coredns`:
+
+```console
+kubectl apply -f https://storage.googleapis.com/kubernetes-the-hard-way/coredns.yaml
+
+serviceaccount/coredns created
+clusterrole.rbac.authorization.k8s.io/system:coredns created
+clusterrolebinding.rbac.authorization.k8s.io/system:coredns created
+configmap/coredns created
+deployment.extensions/coredns created
+service/kube-dns created
+```
+
+Выведем список pods созданных `kube-dns` deployment:
+
+```console
+kubectl get pods -l k8s-app=kube-dns -n kube-system
+
+NAME                       READY   STATUS    RESTARTS   AGE
+coredns-699f8ddd77-94qv9   1/1     Running   0          20s
+coredns-699f8ddd77-gtcgb   1/1     Running   0          20s
+```
+
+- Проверка
+
+Создадим `busybox` deployment:
+
+```console
+kubectl run --generator=run-pod/v1 busybox --image=busybox:1.28 --command -- sleep 3600
+```
+
+Получим список pods созданных `busybox` deployment:
+
+```console
+kubectl get pods -l run=busybox
+
+NAME      READY   STATUS    RESTARTS   AGE
+busybox   1/1     Running   0          3s
+```
+
+Получим полное имя `busybox` pod:
+
+```console
+POD_NAME=$(kubectl get pods -l run=busybox -o jsonpath="{.items[0].metadata.name}")
+```
+
+Выполним DNS lookup для kubernetes сервиса внутри `busybox` pod:
+
+```console
+kubectl exec -ti $POD_NAME -- nslookup kubernetes
+
+Server:    10.32.0.10
+Address 1: 10.32.0.10 kube-dns.kube-system.svc.cluster.local
+
+Name:      kubernetes
+Address 1: 10.32.0.1 kubernetes.default.svc.cluster.local
+```
+
+#### Smoke Test
+
+Далее мы выполним ряд задач, чтобы убедиться, что наш кластер Kubernetes работает правильно.
+
+##### Шифрование данных
+
+В данном разделе мы проверим возможность [шифрования секретных данных в состоянии покоя](https://kubernetes.io/docs/tasks/administer-cluster/encrypt-data/#verifying-that-data-is-encrypted).
+
+Создадим обычный секрет:
+
+```console
+kubectl create secret generic kubernetes-the-hard-way \
+  --from-literal="mykey=mydata"
+```
+
+Получим hexdump секрета `kubernetes-the-hard-way`, хранящегося в etcd:
+
+```console
+gcloud compute ssh controller-0 \
+  --command "sudo ETCDCTL_API=3 etcdctl get \
+  --endpoints=https://127.0.0.1:2379 \
+  --cacert=/etc/etcd/ca.pem \
+  --cert=/etc/etcd/kubernetes.pem \
+  --key=/etc/etcd/kubernetes-key.pem\
+  /registry/secrets/default/kubernetes-the-hard-way | hexdump -C"
+
+00000000  2f 72 65 67 69 73 74 72  79 2f 73 65 63 72 65 74  |/registry/secret|
+00000010  73 2f 64 65 66 61 75 6c  74 2f 6b 75 62 65 72 6e  |s/default/kubern|
+00000020  65 74 65 73 2d 74 68 65  2d 68 61 72 64 2d 77 61  |etes-the-hard-wa|
+00000030  79 0a 6b 38 73 3a 65 6e  63 3a 61 65 73 63 62 63  |y.k8s:enc:aescbc|
+00000040  3a 76 31 3a 6b 65 79 31  3a 44 ac 6e ac 11 2f 28  |:v1:key1:D.n../(|
+00000050  02 46 3d ad 9d cd 68 be  e4 cc 63 ae 13 e4 99 e8  |.F=...h...c.....|
+00000060  6e 55 a0 fd 9d 33 7a b1  17 6b 20 19 23 dc 3e 67  |nU...3z..k .#.>g|
+00000070  c9 6c 47 fa 78 8b 4d 28  cd d1 71 25 e9 29 ec 88  |.lG.x.M(..q%.)..|
+00000080  7f c9 76 b6 31 63 6e ea  ac c5 e4 2f 32 d7 a6 94  |..v.1cn..../2...|
+00000090  3c 3d 97 29 40 5a ee e1  ef d6 b2 17 01 75 a4 a3  |<=.)@Z.......u..|
+000000a0  e2 c2 70 5b 77 1a 0b ec  71 c3 87 7a 1f 68 73 03  |..p[w...q..z.hs.|
+000000b0  67 70 5e ba 5e 65 ff 6f  0c 40 5a f9 2a bd d6 0e  |gp^.^e.o.@Z.*...|
+000000c0  44 8d 62 21 1a 30 4f 43  b8 03 69 52 c0 b7 2e 16  |D.b!.0OC..iR....|
+000000d0  14 a5 91 21 29 fa 6e 03  47 e2 06 25 45 7c 4f 8f  |...!).n.G..%E|O.|
+000000e0  6e bb 9d 3b e9 e5 2d 9e  3e 0a                    |n..;..-.>.|
+```
+
+Ключу etcd должен предшествовать `k8s:enc:aescbc:v1:key1`, который указывает, что поставщик `aescbc` использовался для шифрования данных с ключом шифрования `key1`.
+
+##### Deployments
+
+В этом разделе мы проверим возможность создания и управления [Deployments](https://kubernetes.io/docs/concepts/workloads/controllers/deployment/).
+
+Создадим deployments для [nginx](https://nginx.org/en/) веб сервера:
+
+```console
+kubectl create deployment nginx --image=nginx
+```
+
+Выведем список pods созданных `nginx` deployment:
+
+```console
+kubectl get pods -l app=nginx
+
+NAME                     READY   STATUS    RESTARTS   AGE
+nginx-554b9c67f9-vt5rn   1/1     Running   0          10s
+```
+
+##### Port Forwarding
+
+В этом разделе мы проверим возможность удаленного доступа к приложениям с помощью [переадресации портов](https://kubernetes.io/docs/tasks/access-application-cluster/port-forward-access-application-cluster/).
+
+Получим полное имя `nginx` pod:
+
+```console
+POD_NAME=$(kubectl get pods -l app=nginx -o jsonpath="{.items[0].metadata.name}")
+```
+
+Перенаправим порт `8080` на нашем локальном компьютере на порт `80` `nginx` pod:
+
+```console
+kubectl port-forward $POD_NAME 8080:80
+
+Forwarding from 127.0.0.1:8080 -> 80
+Forwarding from [::1]:8080 -> 80
+```
+
+В новом окне терминала создадим HTTP запрос используя адрес переадресации:
+
+```console
+curl --head http://127.0.0.1:8080
+
+HTTP/1.1 200 OK
+Server: nginx/1.17.6
+Date: Mon, 30 Dec 2019 14:35:23 GMT
+Content-Type: text/html
+Content-Length: 612
+Last-Modified: Tue, 19 Nov 2019 12:50:08 GMT
+Connection: keep-alive
+ETag: "5dd3e500-264"
+Accept-Ranges: bytes
+```
+
+Вернемся к предыдущему терминалу и остановим переадресацию порта на `nginx` pod:
+
+```console
+Forwarding from 127.0.0.1:8080 -> 80
+Forwarding from [::1]:8080 -> 80
+Handling connection for 8080
+^C
+```
+
+##### Логирование
+
+В этом разделе мы проверим возможность [получения логов контейнера](https://kubernetes.io/docs/concepts/cluster-administration/logging/).
+
+Выведем лог `nginx` pod:
+
+```console
+kubectl logs $POD_NAME
+
+127.0.0.1 - - [30/Dec/2019:14:35:23 +0000] "HEAD / HTTP/1.1" 200 0 "-" "curl/7.58.0" "-"
+```
+
+##### Exec
+
+В этом разделе мы проверим возможность [выполнения команд в контейнере](https://kubernetes.io/docs/tasks/debug-application-cluster/get-shell-running-container/#running-individual-commands-in-a-container).
+
+Выведем версию nginx, выполнив команду `nginx -v` в контейнере `nginx`:
+
+```console
+kubectl exec -ti $POD_NAME -- nginx -v
+
+nginx version: nginx/1.17.6
+```
+
+##### Services
+
+В этом разделе мы проверим возможность выставлять приложения, используя [Service](https://kubernetes.io/docs/concepts/services-networking/service/).
+
+Предоставим `nginx` deployment с помощью [NodePort](https://kubernetes.io/docs/concepts/services-networking/service/#type-nodeport) сервиса:
+
+```console
+kubectl expose deployment nginx --port 80 --type NodePort
+```
+
+>Нельзя использовать тип службы LoadBalancer, поскольку в нашем кластере не настроена [интеграция с облачным провайдером](https://kubernetes.io/docs/getting-started-guides/scratch/#cloud-provider). Настройка интеграции с облачным провайдером выходит за рамки данного руководства.
+
+Получим список нодов назначенных `nginx` сервису:
+
+```console
+NODE_PORT=$(kubectl get svc nginx \
+  --output=jsonpath='{range .spec.ports[0]}{.nodePort}')
+```
+
+Создадим правило фаервола разрешающее удаленный доступ к `nginx` порту ноды:
+
+```console
+gcloud compute firewall-rules create kubernetes-the-hard-way-allow-nginx-service \
+  --allow=tcp:${NODE_PORT} \
+  --network kubernetes-the-hard-way
+```
+
+Получим внешний IP-адрес рабочей ноды:
+
+```console
+EXTERNAL_IP=$(gcloud compute instances describe worker-0 \
+  --format 'value(networkInterfaces[0].accessConfigs[0].natIP)')
+```
+
+Создадим HTTP запрос используя внешний IP-адрес и `nginx` порт ноды:
+
+```console
+curl -I http://${EXTERNAL_IP}:${NODE_PORT}
+
+HTTP/1.1 200 OK
+Server: nginx/1.17.6
+Date: Mon, 30 Dec 2019 14:35:23 GMT
+Content-Type: text/html
+Content-Length: 612
+Last-Modified: Tue, 19 Nov 2019 12:50:08 GMT
+Connection: keep-alive
+ETag: "5dd3e500-264"
+Accept-Ranges: bytes
+```
+
+##### Проверка создания deployments нашего приложения
+
+Перед удалнием кластера, проверим прохождение создания deployments для нашего приложения:
+
+```console
+cd kubernetes/reddit
+kubectl apply -f ui-deployment.yml
+kubectl apply -f comment-deployment.yml
+kubectl apply -f mongo-deployment.yml
+kubectl apply -f post-deployment.yml
+
+kubectl get pods
+NAME                                  READY   STATUS    RESTARTS   AGE
+busybox                               1/1     Running   0          40m
+comment-deployment-5878bc6dbf-at8tz   1/1     Running   0          43s
+mongo-deployment-36d49115c4-ra6vs     1/1     Running   0          34s
+nginx-587b9c67f9-jmlrh                1/1     Running   0          58m
+post-deployment-79115fc5df-zn3zl      1/1     Running   0          12s
+ui-deployment-ab9f4cab3-ndtdl         1/1     Running   0          54s
+```
+
+#### Удаление кластера после прохождения THW
+
+Далее мы удалим VM, созданные для работы.
+
+##### VM
+
+Удалим рабочие и контроллер VM:
+
+```console
+gcloud -q compute instances delete \
+  controller-0 controller-1 controller-2 \
+  worker-0 worker-1 worker-2 \
+  --zone $(gcloud config get-value compute/zone)
+```
+
+##### Networks
+
+Удалим внешние сетевые ресурсы балансировщика нагрузки:
+
+```console
+{
+  gcloud -q compute forwarding-rules delete kubernetes-forwarding-rule \
+    --region $(gcloud config get-value compute/region)
+
+  gcloud -q compute target-pools delete kubernetes-target-pool
+
+  gcloud -q compute http-health-checks delete kubernetes
+
+  gcloud -q compute addresses delete kubernetes-the-hard-way
+}
+```
+
+Удалим правила фаервола `kubernetes-the-hard-way`:
+
+```console
+gcloud -q compute firewall-rules delete \
+  kubernetes-the-hard-way-allow-nginx-service \
+  kubernetes-the-hard-way-allow-internal \
+  kubernetes-the-hard-way-allow-external \
+  kubernetes-the-hard-way-allow-health-check
+```
+
+Удалим VPC сеть `kubernetes-the-hard-way`:
+
+```console
+{
+  gcloud -q compute routes delete \
+    kubernetes-route-10-200-0-0-24 \
+    kubernetes-route-10-200-1-0-24 \
+    kubernetes-route-10-200-2-0-24
+
+  gcloud -q compute networks subnets delete kubernetes
+
+  gcloud -q compute networks delete kubernetes-the-hard-way
+}
+```
+
+- Задание со *
+
+Для выполнения задания воспользуемся [Kubernetes on Google Computing Engine](https://github.com/Zenika/k8s-on-gce).
+
+Данный проект позволит автоматизировать развертывание Kubernetes на примере 3 контроллеров и 3 рабочих нод на GCE.
+
+Также полезный материал - [A custom Kubernetes Cluster on GCP in 7 minutes with Terraform and Ansible](https://medium.zenika.com/a-custom-kubernetes-cluster-on-gcp-in-7-minutes-with-terraform-and-ansible-75875f89309e).
+
 ## Логирование и распределенная трассировка
 
-### Подготовка
+- Подготовка
 
-- обновим код микросервисов, в который был добавлен функционала логирования <https://github.com/express42/reddit/tree/logging> (git clone -b logging  --single-branch https://github.com/express42/reddit.git)
+- обновим код микросервисов, в который был добавлен функционала логирования <https://github.com/express42/reddit/tree/logging> (git clone -b logging --single-branch <https://github.com/express42/reddit.git>)
 - выполним сборку образов при помощи скриптов docker_build.sh в директории каждого сервиса:
-```
+
+```console
 bash docker_build.sh && docker push $USER_NAME/ui
 bash docker_build.sh && docker push $USER_NAME/post
 bash docker_build.sh && docker push $USER_NAME/comment
 ```
+
 - или сразу все из корня репозитория: for i in ui post-py comment; do cd src/$i; bash docker_build.sh; cd -; done
 - или c помощью Makefile: make build_app
 - создадим Docker хост в GCE и настроим локальное окружение на работу с ним, откроем порты файрволла:
-```
+
+```console
 export GOOGLE_PROJECT=docker-258208
 
 docker-machine create --driver google \
@@ -36,6 +2297,7 @@ docker-machine ip logging
 ### Логирование Docker контейнеров
 
 Как упоминалось на лекции хранить все логи стоит централизованно: на одном (нескольких) серверах. В этом ДЗ мы рассмотрим пример системы централизованного логирования на примере Elastic стека (ранее известного как ELK): который включает в себя 3 основных компонента:
+
 - ElasticSearch (TSDB и поисковый движок для хранения данных)
 - Logstash (для агрегации и трансформации данных)
 - Kibana (для визуализации)
@@ -44,7 +2306,7 @@ docker-machine ip logging
 
 Создадим отдельный compose-файл для нашей системы логирования в папке docker/docker-compose-logging.yml
 
-```
+```y
 version: '3'
 services:
   fluentd:
@@ -71,7 +2333,7 @@ Fluentd инструмент, который может использовать
 Создадим в проекте microservices директорию logging/fluentd
 В созданной директорий, создадим простой Dockerfile со следущим содержимым:
 
-```
+```dockerfile
 FROM fluent/fluentd:v0.12
 RUN fluent-gem install fluent-plugin-elasticsearch --no-rdoc --no-ri --version 1.9.5
 RUN fluent-gem install fluent-plugin-grok-parser --no-rdoc --no-ri --version 1.0.0
@@ -80,7 +2342,7 @@ ADD fluent.conf /fluentd/etc
 
 В директории logging/fluentd создадим файл конфигурации logging/fluentd/fluent.conf
 
-```
+```console
 <source>
   @type forward
   port 24224
@@ -137,7 +2399,7 @@ docker-compose logs -f post
 
 Определим драйвер для логирования для сервиса post внутри compose-файла docker-compose.yml
 
-```
+```yml
     logging:
       driver: "fluentd"
       options:
@@ -147,7 +2409,7 @@ docker-compose logs -f post
 
 Поднимем инфраструктуру централизованной системы логирования и перезапустим сервисы приложения из каталога docker или с помощью Makefile
 
-```
+```console
 docker-compose -f docker-compose-logging.yml up -d
 docker-compose down
 docker-compose up -d
@@ -155,7 +2417,7 @@ docker-compose up -d
 
 У нас возникла проблема с запуском elasticsearch. Смотрим логи elasticsearch и видим две ошибки, которые нам предстоит исправить:
 
-```
+```console
 ERROR: [2] bootstrap checks failed
 [1]: max virtual memory areas vm.max_map_count [65530] is too low, increase to at least [262144]
 [2]: the default discovery settings are unsuitable for production use; at least one of [discovery.seed_hosts, discovery.seed_providers, cluster.initial_master_nodes] must be configured
@@ -190,7 +2452,7 @@ Kibana - инструмент для визуализации и анализа 
 
 Добавим фильтр для парсинга json логов, приходящих от post сервиса, в конфиг fluentd.conf
 
-```
+```console
 <filter service.post>
   @type parser
   format json
@@ -211,7 +2473,7 @@ Kibana - инструмент для визуализации и анализа 
 
 По аналогии с post сервисом определим для ui сервиса драйвер для логирования fluentd в compose-файле docker-compose.yml
 
-```
+```yml
     logging:
       driver: "fluentd"
       options:
@@ -221,7 +2483,7 @@ Kibana - инструмент для визуализации и анализа 
 
 Перезапустим ui сервис из каталога docker:
 
-```
+```console
 docker-compose stop ui
 docker-compose rm ui
 docker-compose up -d
@@ -232,7 +2494,7 @@ docker-compose up -d
 Когда приложение или сервис не пишет структурированные логи, приходится использовать старые добрые регулярные выражения для их парсинга в /docker fluentd/fluent.conf.
 Следующее регулярное выражение нужно, чтобы успешно выделить интересующую нас информацию из лога UI-сервиса в поля:
 
-```
+```console
 <filter service.ui>
   @type parser
   format /\[(?<time>[^\]]*)\]  (?<level>\S+) (?<user>\S+)[\W]*service=(?<service>\S+)[\W]*event=(?<event>\S+)[\W]*(?:path=(?<path>\S+)[\W]*)?request_id=(?<request_id>\S+)[\W]*(?:remote_addr=(?<remote_addr>\S+)[\W]*)?(?:method= (?<method>\S+)[\W]*)?(?:response_status=(?<response_status>\S+)[\W]*)?(?:message='(?<message>[^\']*)[\W]*)?/
@@ -242,7 +2504,7 @@ docker-compose up -d
 
 Обновим образ fluentd и перезапустим kibana
 
-```
+```console
 docker build -t $USER_NAME/fluentd .
 docker-compose -f docker-compose-logging.yml down
 docker-compose -f docker-compose-logging.yml up -d
@@ -252,7 +2514,7 @@ docker-compose -f docker-compose-logging.yml up -d
 
 Созданные регулярки могут иметь ошибки, их сложно менять и невозможно читать. Для облегчения задачи парсинга вместо стандартных регулярок можно использовать grok-шаблоны. По-сути grok’и - это именованные шаблоны регулярных выражеий (очень похоже на функции). Можно использовать готовый regexp, просто сославшись на него как на функцию docker/fluentd/fluent.conf
 
-```
+```console
 <filter service.ui>
   @type parser
   key_name log
@@ -264,7 +2526,7 @@ docker-compose -f docker-compose-logging.yml up -d
 Это grok-шаблон, зашитый в плагин для fluentd
 Как мы можем заметить часть логов все еще нужно распарсить. Для этого используем несколько Grok-ов по-очереди:
 
-```
+```console
 <filter service.ui>
   @type parser
   format grok
@@ -277,7 +2539,7 @@ docker-compose -f docker-compose-logging.yml up -d
 Задание со * - UI-сервис шлет логи в нескольких форматах. Такой лог остался неразобранным.
 Дополним наш fluent.conf для разбора обоих форматор логов UI-сервиса одновременно:
 
-```
+```console
 <filter service.ui>
   @type parser
   format grok
@@ -296,7 +2558,7 @@ docker-compose -f docker-compose-logging.yml up -d
 
 Добавим в compose-файл для сервисов логирования сервис распределенного трейсинга Zipkin:
 
-```
+```yml
 services:
   zipkin:
     image: openzipkin/zipkin
@@ -307,7 +2569,7 @@ services:
 Правим наш docker/docker-compose-logging.yml
 Добавим для каждого сервиса поддержку ENV переменных и зададим параметризованный параметр ZIPKIN_ENABLED
 
-```
+```yml
 environment:
 - ZIPKIN_ENABLED=${ZIPKIN_ENABLED}
 ```
@@ -316,7 +2578,7 @@ environment:
 
 Пересоздадим наши сервисы:
 
-```
+```console
 docker-compose -f docker-compose-logging.yml -f docker-compose.yml down
 docker-compose -f docker-compose-logging.yml -f docker-compose.yml up -d
 ```
@@ -361,7 +2623,7 @@ docker-compose -f docker-compose-logging.yml -f docker-compose.yml up -d
 
 Подготовка окружения
 
-```
+```console
 export GOOGLE_PROJECT=docker-258208
 docker-machine create --driver google \
     --google-machine-image https://www.googleapis.com/compute/v1/projects/ubuntu-os-cloud/global/images/family/ubuntu-1604-lts \
@@ -386,7 +2648,7 @@ cAdvisor собирает информацию о ресурсах потреб�
 
 cAdvisor также будем запускать в контейнере. Для этого добавим новый сервис в наш компоуз файл мониторинга docker-compose-monitoring.yml
 
-```
+```yml
 ...
   cadvisor:
     image: google/cadvisor:${CADVISOR_VER}
@@ -403,7 +2665,7 @@ cAdvisor также будем запускать в контейнере. Дл�
 
 Добавим информацию о новом сервисе в конфигурацию Prometheus, чтобы он начал собирать метрики:
 
-```
+```yml
 ...
   - job_name: 'cadvisor'
     static_configs:
@@ -413,20 +2675,20 @@ cAdvisor также будем запускать в контейнере. Дл�
 
 Пересоберем образ Prometheus с обновленной конфигурацией:
 
-```
+```console
 export USER_NAME=kovtalex
 docker build -t $USER_NAME/prometheus .
 ```
 
 Запустим сервисы:
 
-```
+```console
 docker-compose up -d
 docker-compose -f docker-compose-monitoring.yml up -d
 ```
 
 cAdvisor имеет UI, в котором отображается собираемая о контейнерах информация
-Откроем страницу Web UI по адресу http://<docker-machinehost-ip>:8080
+Откроем страницу Web UI по адресу <http://docker-machinehost-ip:8080>
 
 По пути /metrics все собираемые метрики публикуются для сбора Prometheus
 
@@ -436,7 +2698,7 @@ cAdvisor имеет UI, в котором отображается собира�
 
 docker-compose-monitoring.yml
 
-```
+```yml
 ...
   grafana:
     image: grafana/grafana:5.0.0
@@ -458,7 +2720,7 @@ volumes:
 
 $ docker-compose -f docker-compose-monitoring.yml up -d grafana
 
-Откроем страницу Web UI Grafana по адресу http://<dockermachine-host-ip>:3000 и используем для входа логин и пароль администратора, которые мы передали через переменные окружения
+Откроем страницу Web UI Grafana по адресу <http://dockermachine-host-ip:3000> и используем для входа логин и пароль администратора, которые мы передали через переменные окружения
 
 Добавим источник данных:
 
@@ -488,7 +2750,7 @@ $ docker-compose -f docker-compose-monitoring.yml up -d grafana
 
 prometheus.yml
 
-```
+```yml
 ...
   - job_name: 'post'
     static_configs:
@@ -498,7 +2760,7 @@ prometheus.yml
 
 Пересоздадим нашу Docker инфраструктуру мониторинга:
 
-```
+```console
 docker build -t $USER_NAME/prometheus .
 docker-compose -f docker-compose-monitoring.yml down
 docker-compose -f docker-compose-monitoring.yml up -d
@@ -542,7 +2804,7 @@ Alertmanager - дополнительный компонент для систе
 
 Создадим новую директорию monitoring/alertmanager. В этой директории создадим Dockerfile со следующим содержимым:
 
-```
+```dockerfile
 FROM prom/alertmanager:v0.14.0
 ADD config.yml /etc/alertmanager/
 ```
@@ -551,7 +2813,7 @@ ADD config.yml /etc/alertmanager/
 В директории monitoring/alertmanager создадим файл config.yml в котором определим отправку нотификаций в свой тестовый слак канал.
 Для отправки нотификаций в слак канал потребуется создать Incoming Webhook
 
-```
+```yml
 global:
   slack_api_url: 'https://hooks.slack.com/services/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'
 
@@ -568,7 +2830,7 @@ receivers:
 
 Добавим новый сервис в компоуз файл мониторинга:
 
-```
+```yml
 ...
   alertmanager:
     image: ${USER_NAME}/alertmanager:${ALERTMANAGER_VER}
@@ -584,7 +2846,7 @@ receivers:
 
 alerts.yml
 
-```
+```yml
 groups:
   - name: alert.rules
     rules:
@@ -600,14 +2862,14 @@ groups:
 
 Добавим операцию копирования данного файла в Dockerfile: monitoring/prometheus/Dockerfile
 
-```
+```dockerfile
 ...
 ADD alerts.yml /etc/prometheus/
 ```
 
 Добавим информацию о правилах, в конфиг Prometheus:
 
-```
+```yml
 rule_files:
   - "alerts.yml"
 
@@ -623,14 +2885,14 @@ alerting:
 
 Пересоздадим нашу Docker инфраструктуру мониторинга:
 
-```
+```console
 docker-compose -f docker-compose-monitoring.yml down
 docker-compose -f docker-compose-monitoring.yml up -d
 ```
 
 Остановим один из сервисов и подождем одну минуту
 
-```
+```console
 docker-compose stop post
 ```
 
@@ -641,7 +2903,7 @@ P.S. Проверить работу вебхуков слака можно че
 
 Запушим собранные вами образы на DockerHub и удалим виртуалку
 
-### Задание со *
+- Задание со *
 
 #### Обновим наш Makefile добавив билд и публикацию сервисов из ДЗ
 
@@ -649,18 +2911,18 @@ P.S. Проверить работу вебхуков слака можно че
 
 Для этого создадим /etc/docker/daemon.json на машине с Docker со следующим содержимым и перезапустим сервис
 
-```
+```console
 {
   "metrics-addr" : "0.0.0.0:9323",
   "experimental" : true
 }
 ```
 
-Метрики Docker можно будет посмотреть по адресу http://<dockermachine-host-ip>:9323/metrics
+Метрики Docker можно будет посмотреть по адресу <http://dockermachine-host-ip:9323/metrics>
 
 Обновим наш prometheus.yml
 
-```
+```yml
 ...
   - job_name: 'docker'
     static_configs:
@@ -679,7 +2941,7 @@ Trickster будет забирать данные с Prometheus и отдава
 
 Создадим файл конфигурации trickster.conf и закинем его на машину с Docker в /tmp/
 
-```
+```console
 [main]
 [proxy_server]
   listen_port = 9090
@@ -701,7 +2963,7 @@ log_level = 'info'
 
 docker-compose-monitoring.yml
 
-```
+```yml
 ...
   trickster:
     image: tricksterio/trickster
@@ -713,7 +2975,7 @@ docker-compose-monitoring.yml
 
 prometheus.yml
 
-```
+```yml
 ...
   - job_name: 'trickster'
     static_configs:
@@ -732,14 +2994,14 @@ prometheus.yml
 
 Создадим правило фаервола для Prometheus и Puma:
 
-```
+```console
 gcloud compute firewall-rules create prometheus-default --allow tcp:9090
 gcloud compute firewall-rules create puma-default --allow tcp:9292
 ```
 
 Создадим Docker хост в GCE и настроим локальное окружение на работу с ним
 
-```
+```console
 export GOOGLE_PROJECT=docker-258208
 
 docker-machine create --driver google \
@@ -753,7 +3015,7 @@ eval $(docker-machine env docker-host)
 
 Воспользуемся готовым образом с DockerHub
 
-```
+```console
 docker run --rm -p 9090:9090 -d --name prometheus prom/prometheus:v2.1.0
 docker ps
 docker-machine ip docker-host
@@ -763,7 +3025,7 @@ docker-machine ip docker-host
 
 Пример метрики
 
-```
+```console
 prometheus_build_info{branch="HEAD",goversion="go1.9.1",instance="localhost:9090", job="prometheus", revision="3a7c51ab70fc7615cd318204d3aa7c078b7c5b20",version="1.8.1"} 1
 ```
 
@@ -781,7 +3043,7 @@ docker stop prometheus
 
 prometheus.yml
 
-```
+```yml
 ---
 global:
   scrape_interval: '5s'
@@ -803,7 +3065,7 @@ scrape_configs:
         - 'comment:9292'
 ```
 
-```
+```console
 export USER_NAME=kovtalex
 docker build -t $USER_NAME/prometheus .
 ```
@@ -818,11 +3080,11 @@ docker build -t $USER_NAME/prometheus .
 
 for i in ui post-py comment; do cd src/$i; bash docker_build.sh; cd -; done
 
-Будем поднимать наш Prometheus совместно с микросервисами. Определите в вашем docker/docker-compose.yml файле новый сервис
+Будем поднимать наш Prometheus совместно с микросервисами. Определите в нашем docker/docker-compose.yml файле новый сервис
 
 docker-compose.yml
 
-```
+```yml
 services:
 ...
   prometheus:
@@ -879,7 +3141,7 @@ Exporters
 
 Дополним наш docker-compose.yml
 
-```
+```yml
 services:
 
   node-exporter:
@@ -897,7 +3159,7 @@ services:
 
 и prometheus.yml
 
-```
+```yml
 scrape_configs:
 ...
  - job_name: 'node'
@@ -908,7 +3170,7 @@ scrape_configs:
 
 Не забудем собрать новый Docker для Prometheus
 
-```
+```console
 docker build -t $USER_NAME/prometheus
 docker-compose down
 docker-compose up -d
@@ -923,7 +3185,7 @@ docker-compose up -d
 
 Запушим собранные нами образы на DockerHub
 
-```
+```console
 docker login
 docker push $USER_NAME/ui
 docker push $USER_NAME/comment
@@ -931,7 +3193,7 @@ docker push $USER_NAME/post
 docker push $USER_NAME/prometheus
 ```
 
-### Задание со *
+- Задание со *
 
 #### Добавляем мониторинг MongoDB с использованием необходимого экспортера
 
@@ -940,14 +3202,14 @@ docker push $USER_NAME/prometheus
 
 Билдим образ по документации и пушим его в наш репозитарий:
 
-```
+```console
 sudo docker tag blackbox_exporter kovtalex/mongodb_exporter:0.10.0
 sudo docker push kovtalex/mongodb_exporter:0.10.0
 ```
 
 Также правим наш prometheus.yml
 
-```
+```yml
   - job_name: 'mongodb-exporter'
     static_configs:
       - targets:
@@ -956,7 +3218,7 @@ sudo docker push kovtalex/mongodb_exporter:0.10.0
 
 И docker-compose.yml
 
-```
+```yml
   mongodb-exporter:
     image: kovtalex/mongodb_exporter:${MONGODB_EXPORTER_VER}
     command:
@@ -979,7 +3241,7 @@ sudo docker push kovtalex/mongodb_exporter:0.10.0
 
 Напишем наш cloudprober.cfg и закинем его в /tmp на docker-host, т.к. docker-compose будем искать его именно там для передачи в контейнер
 
-```
+```yml
 probe {
     name: "ui-http"
     type: HTTP
@@ -1026,7 +3288,7 @@ probe {
 
 Также правим наш prometheus.yml
 
-```
+```yml
   - job_name: 'cloudprobe-exporter'
     static_configs:
       - targets:
@@ -1035,7 +3297,7 @@ probe {
 
 И docker-compose.yml
 
-```
+```yml
   cloudprobe-exporter:
     image: cloudprober/cloudprober:${CLOUDPROBER_VER}
     volumes:
@@ -1079,7 +3341,7 @@ Gitlab CI состоит из множества компонент и выпо�
 
 Воспользуемся docker-machine для развертывания виртуальной машины и установки docker на хост
 
-```
+```console
 docker-machine create --driver google \
  --google-project docker-258208 \
  --google-machine-image https://www.googleapis.com/compute/v1/projects/ubuntu-os-cloud/global/images/family/ubuntu-1604-lts \
@@ -1102,7 +3364,7 @@ eval $(docker-machine env gitlab-ci)
 
 Если потребуется сделать это руками, а также незабудем установить docker-compose
 
-```
+```console
 sudo  curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo apt-key add -
 sudo add-apt-repository "deb https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable"
 sudo apt-get update
@@ -1114,7 +3376,7 @@ sudo touch docker-compose.yml
 
 docker-compose.yml
 
-```
+```yml
 web:
   image: 'gitlab/gitlab-ce:latest'
   restart: always
@@ -1150,7 +3412,7 @@ docker-compose up -d
 
 выполняем
 
-```
+```console
 git checkout -b gitlab-ci-1
 git remote add gitlab http://34.76.25.244/homework/example.git
 git push gitlab gitlab-ci-1
@@ -1162,7 +3424,7 @@ git push gitlab gitlab-ci-1
 
 .gitlab-ci.yml
 
-```
+```yml
 stages:
   - build
   - test
@@ -1191,7 +3453,7 @@ deploy_job:
 
 После чего сохраняем файл
 
-```
+```console
 git add .gitlab-ci.yml
 git commit -m 'add pipeline definition'
 git push gitlab gitlab-ci-1
@@ -1203,7 +3465,7 @@ git push gitlab gitlab-ci-1
 
 На сервере, где работает Gitlab CI выполним команду:
 
-```
+```console
 docker run -d --name gitlab-runner --restart always \
 -v /srv/gitlab-runner/config:/etc/gitlab-runner \
 -v /var/run/docker.sock:/var/run/docker.sock \
@@ -1212,7 +3474,7 @@ gitlab/gitlab-runner:latest
 
 После запуска Runner нужно зарегистрировать, это можно сделать командой:
 
-```
+```console
 Please enter the gitlab-ci coordinator URL (e.g. https://gitlab.com/):
 http://35.214.222.73/
 Please enter the gitlab-ci token for this runner:
@@ -1232,7 +3494,7 @@ Runner registered successfully.
 
 Добавим исходный код reddit в репозиторий
 
-```
+```console
 git clone https://github.com/express42/reddit.git && rm -rf ./reddit/.git
 git add reddit/
 git commit -m “Add reddit app”
@@ -1241,7 +3503,7 @@ git push gitlab gitlab-ci-1
 
 Изменим описание пайплайна в .gitlab-ci.yml
 
-```
+```yml
 image: ruby:2.4.2
 stages:
 ...
@@ -1265,7 +3527,7 @@ test_unit_job:
 
 simpletest.rb
 
-```
+```rb
 require_relative './app'
 require 'test/unit'
 require 'rack/test'
@@ -1309,7 +3571,7 @@ Staging и Production
 
 Изменение, помеченное тэгом в git запустит полный пайплайн
 
-```
+```console
 git commit -a -m ‘#4 add logout button to profile page’
 git tag 2.4.10
 git push gitlab gitlab-ci-1 --tags
@@ -1321,7 +3583,7 @@ Gitlab CI позволяет определить динамические ок�
 
 Этот job определяет динамическое окружение для каждой ветки в репозитории, кроме ветки master
 
-```
+```yml
 branch review:
   stage: review
   script: echo "Deploy to $CI_ENVIRONMENT_SLUG"
@@ -1334,7 +3596,7 @@ branch review:
     - master
 ```
 
-### Задание со *
+- Задание со *
 
 #### В шаг build добавить сборку контейнера с приложением reddit
 
@@ -1342,13 +3604,13 @@ branch review:
 
 В Gitlab определим переменные для сохранения собранного образа в docker hub
 
-- CI_REGISTRY - https://index.docker.io/v1/
+- CI_REGISTRY - <https://index.docker.io/v1/>
 - CI_REGISTRY_BASE64 - вывод команды "echo -n USER:PASSWORD | base64" с данными авторизации к нашему docker hub
 - CI_REGISTRY_IMAGE - kovtalex/reddit
 
 Модифицируем наш .gitlab-ci.yml
 
-```
+```yml
 build_job:
   stage: build
   image:
@@ -1373,7 +3635,7 @@ build_job:
 
 Модифицируем наш .gitlab-ci.yml
 
-```
+```yml
 deploy_dev_job:
   stage: review
   image: google/cloud-sdk
@@ -1412,7 +3674,7 @@ stop_dev_job:
 
 multiple_runners.sh
 
-```
+```console
 #!/bin/bash
 
 # How to run
@@ -1448,14 +3710,14 @@ done
 
 Подключаемся к ранее созданному docker host’у
 
-```
+```console
 docker-machine ls
 eval $(docker-machine env docker-host)
 ```
 
 #### None network driver
 
-```
+```console
 docker run -ti --rm --network none joffotron/docker-net-tools -c ifconfig
 
 lo        Link encap:Local Loopback  
@@ -1475,7 +3737,7 @@ lo        Link encap:Local Loopback
 
 #### Host network driver
 
-```
+```console
 docker run -ti --rm --network host joffotron/docker-net-tools -c ifconfig
 
 docker0   Link encap:Ethernet  HWaddr 02:42:40:10:DB:61  
@@ -1507,7 +3769,7 @@ lo        Link encap:Local Loopback
 
 Сравним вывод команды с:
 
-```
+```console
 docker-machine ssh docker-host ifconfig
 
 docker0   Link encap:Ethernet  HWaddr 02:42:40:10:db:61  
@@ -1539,7 +3801,7 @@ lo        Link encap:Local Loopback
 
 Запустим несколько раз (2-4)
 
-```
+```console
 docker run --network host -d nginx
 
 docker ps
@@ -1565,12 +3827,12 @@ docker kill $(docker ps -q)
 
 Повторим запуски контейнеров с использованием драйверов none и host и посмотрим, как меняется список namespace-ов
 
-```
+```console
 eb4bdda43b65
 default
 ```
 
-ip netns exec <namespace> <command> - позволит выполнять команды в выбранном namespace: sudo ip netns exec eb4bdda43b65 ifconfig
+ip netns exec namespace command - позволит выполнять команды в выбранном namespace: sudo ip netns exec eb4bdda43b65 ifconfig
 
 #### Bridge network driver
 
@@ -1580,7 +3842,7 @@ docker network create reddit --driver bridge
 
 Запустим наш проект reddit с использованием bridge-сети
 
-```
+```console
 docker run -d --network=reddit mongo:latest
 docker run -d --network=reddit kovtalex/post:3.0
 docker run -d --network=reddit kovtalex/comment:3.0
@@ -1589,12 +3851,12 @@ docker run -d --network=reddit -p 9292:9292 kovtalex/ui:3.0
 
 Сервис не заработает. Тогда решением проблемы будет присвоение контейнерам имен или сетевых алиасов при старте:
 
-```
+```console
 --name <name> (можно задать только 1 имя)
 --network-alias <alias-name> (можно задать множество алиасов)
 ```
 
-```
+```console
 docker kill $(docker ps -q)
 docker run -d --network=reddit --network-alias=post_db --network-alias=comment_db mongo:latest
 docker run -d --network=reddit --network-alias=post kovtalex/post:3.0
@@ -1606,7 +3868,7 @@ docker run -d --network=reddit -p 9292:9292 kovtalex/ui:3.0
 
 Далее запустим наш проект в 2-х bridge сетях. Так , чтобы сервис ui не имел доступа к базе данных
 
-```
+```console
 docker kill $(docker ps -q)
 
 docker network create back_net --subnet=10.0.2.0/24
@@ -1623,7 +3885,7 @@ docker network connect front_net comment
 
 Теперь давайте посмотрим как выглядит сетевой стек Linux в текущий момент
 
-```
+```console
 docker-machine ssh docker-host
 sudo apt-get update && sudo apt-get install bridge-utils
 
@@ -1675,7 +3937,7 @@ ps ax | grep docker-proxy
 
 Создадим docker-compose.yml и выполним
 
-```
+```console
 docker kill $(docker ps -q)
 export USRNAME=kovtalex
 docker-compose up -d
@@ -1702,7 +3964,7 @@ src_ui_1        puma                          Up      0.0.0.0:9292->9292/tcp
 
 В итоге наш docker-compose.yml будет выглядеть так
 
-```
+```yml
 version: '3.3'
 services:
   mongo_db:
@@ -1750,14 +4012,14 @@ networks:
   front_net:
 ```
 
-### Задание со *
+- Задание со *
 
 Создадим docker-compose.override.yml для reddit проекта, который позволит
 
 - изменять код каждого из приложений, не выполняя сборку образа задействовав volumes
 - добавим команды перезаписи для выполнения puma с флагами --debug -w 2
 
-```
+```console
 docker ps
 CONTAINER ID        IMAGE                  COMMAND                  CREATED             STATUS              PORTS                    NAMES
 54ad7a2726d8        mongo:3.2              "docker-entrypoint.s…"   5 minutes ago       Up 5 minutes        27017/tcp                reddit_mongo_db_1
@@ -1768,7 +4030,7 @@ f58fa18fb28e        kovtalex/ui:3.0        "puma --debug -w 2"      5 minutes ag
 
 docker-compose.override.yml
 
-```
+```yml
 version: '3.3'
 services:
   ui:
@@ -1796,7 +4058,7 @@ volumes:
 
 Также для оптимизации инструкций Dockerfile воспользуемся практиками из: <https://docs.docker.com/engine/userguide/eng-image/dockerfile_best-practices/#sort-multi-line-arguments>
 
-```
+```console
 docker pull hadolint/hadolint
 
 docker run --rm -i hadolint/hadolint < ./ui/Dockerfile
@@ -1808,18 +4070,20 @@ docker run --rm -i hadolint/hadolint < ./post-py/Dockerfile
 
 Подключимся к ранее созданному Docker хосту
 
-```
+```console
 docker-machine ls
 eval $(docker-machine env docker-host)
 ```
 
 Для удаления
-```
+
+```console
 docker-machine rm <имя>
 ```
 
 Для переключения на локальный docker
-```
+
+```console
 eval $(docker-machine env --unset)
 ```
 
@@ -1835,7 +4099,7 @@ eval $(docker-machine env --unset)
 
 ./post-py/Dockerfile
 
-```
+```dockerfile
 FROM python:3.6.0-alpine
 
 WORKDIR /app
@@ -1852,7 +4116,7 @@ ENTRYPOINT ["python3", "post_app.py"]
 
 ./comment/Dockerfile
 
-```
+```dockerfile
 FROM ruby:2.2
 RUN apt-get update -qq && apt-get install --no-install-recommends -y build-essential=11.7 \
   && apt-get clean && rm -rf /var/lib/apt/lists/*
@@ -1873,7 +4137,7 @@ CMD ["puma"]
 
 ./ui/Dockerfile
 
-```
+```dockerfile
 FROM ruby:2.2
 RUN apt-get update -qq && apt-get install -y build-essential
 
@@ -1897,7 +4161,7 @@ CMD ["puma"]
 
 И соберем образы
 
-```
+```console
 docker build -t kovtalex/post:1.0 ./post-py
 docker build -t kovtalex/comment:1.0 ./comment
 docker build -t kovtalex/ui:1.0 ./ui
@@ -1905,7 +4169,7 @@ docker build -t kovtalex/ui:1.0 ./ui
 
 Создадим специальную сеть для приложения и запустим наши контейнеры:
 
-```
+```console
 docker network create reddit
 
 docker run -d --network=reddit --network-alias=post_db --network-alias=comment_db mongo:latest
@@ -1926,7 +4190,7 @@ docker run -d --network=reddit -p 9292:9292 kotvalex/ui:1.0
 - Остановливаем контейнеры: docker kill $(docker ps -q)
 - Запускаем контейнеры с другими сетевыми алиасами через переменные окружения передаваемые при старте контейнеров
 
-```
+```console
 docker run -d --network=reddit --network-alias=reddit_post_db --network-alias=reddit_comment_db mongo:latest
 docker run -d --network=reddit --network-alias=reddit_post -e POST_DATABASE_HOST=reddit_post_db kovtalex/post:1.0
 docker run -d --network=reddit --network-alias=reddit_comment -e COMMENT_DATABASE_HOST=reddit_comment_db kovtalex/comment:1.0
@@ -1937,7 +4201,7 @@ docker run -d --network=reddit -p 9292:9292 -e POST_SERVICE_HOST=reddit_post -e 
 
 Так как наши образы занимают немало места, начнем их улучшение с ./ui/Dockerfile
 
-```
+```dockerfile
 FROM ubuntu:16.04
 RUN apt-get update \
     && apt-get install --no-install-recommends -y ruby-full=* ruby-dev=* build-essential=* \
@@ -1961,7 +4225,7 @@ CMD ["puma"]
 
 Пересоберем образ ui и проверим его размер
 
-```
+```console
 docker build -t kovtalex/ui:2.0 ./ui
 docker images
 
@@ -1979,7 +4243,7 @@ kovtalex/ui         2.0                 6c68271947b0        24 seconds ago      
 
 ./comment/Dockerfile
 
-```
+```dockerfile
 FROM ruby:2.3-alpine
 ENV APP_HOME /app
 RUN apk add --no-cache build-base=0.5-r1 && gem install bundler:1.17.3 --no-document
@@ -1996,7 +4260,7 @@ CMD ["puma"]
 
 ./post-py/Dockerfile
 
-```
+```dockerfile
 FROM python:3.6.0-alpine
 ENV APP_HOME /app
 WORKDIR $APP_HOME
@@ -2015,7 +4279,7 @@ ENTRYPOINT ["python3", "post_app.py"]
 
 ./ui/Dockerfile
 
-```
+```dockerfile
 FROM ruby:2.3-alpine
 ENV APP_HOME /app
 RUN apk add --no-cache build-base=0.5-r1 && gem install bundler:1.17.3 --no-document
@@ -2034,7 +4298,7 @@ CMD ["puma"]
 
 Пересоберем:
 
-```
+```console
 docker build -t kovtalex/post:3.0 ./post-py
 docker build -t kovtalex/comment:3.0 ./comment
 docker build -t kovtalex/ui:3.0 ./ui
@@ -2044,7 +4308,7 @@ docker build -t kovtalex/ui:3.0 ./ui
 
 Запустим новые копии контейнеров и проверим работу приложения:
 
-```
+```console
 docker run -d --network=reddit --network-alias=post_db --network-alias=comment_db mongo:latest
 docker run -d --network=reddit --network-alias=post kovtalex/post:3.0
 docker run -d --network=reddit --network-alias=comment kovtalex/comment:3.0
@@ -2057,21 +4321,21 @@ docker run -d --network=reddit -p 9292:9292 kovtalex/ui:3.0
 
 Запустим новые копии контейнеров и mongo с подключенным Docker Volume:
 
-```
+```console
 docker run -d --network=reddit --network-alias=post_db --network-alias=comment_db -v reddit_db:/data/db mongo:latest
 docker run -d --network=reddit --network-alias=post kovtalex/post:3.0
 docker run -d --network=reddit --network-alias=comment kovtalex/comment:3.0
 docker run -d --network=reddit -p 9292:9292 kovtalex/ui:3.0
 ```
 
-- Зайдем на http://IP:9292/ и проверим работу приложения
+- Зайдем на <http://IP:9292/> и проверим работу приложения
 - Напишем пост
 - Перезапустим контейнеры снова
 - Проверим, что пост остался на месте
 
 Также проверим, что после оптимизаци наши образы стали занимать меньше места: docker images
 
-```
+```console
 REPOSITORY          TAG                 IMAGE ID            CREATED             SIZE
 kovtalex/ui         3.0                 b3594948cd1a        About an hour ago   297MB
 kovtalex/ui         2.0                 696f9010f0b4        About an hour ago   411MB
@@ -2104,7 +4368,7 @@ kovtalex/comment    1.0                 013c2292f299        About an hour ago   
 - docker info – вывод информации о текущем состоянии docker daemon
 - docker run - создание и запуск контейнера из image (каждый раз запускает новый контейнер)
 
-```
+```console
 docker run = docker create + docker start + docker attach если указан флаг -i
 Если не указывать флаг --rm при запуске docker run, то после остановки контейнер вместе с содержимым остается на диске
 
@@ -2127,7 +4391,7 @@ docker run -dt nginx:latest
 - docker commit - создает image из контейнера (контейнер при этом остается запущенным)
 - docker kill - kill сразу посылает SIGKILL (сигнал остановки приложения)
 
-```
+```console
 docker kill $(docker ps -q)
 ```
 
@@ -2139,7 +4403,7 @@ docker kill $(docker ps -q)
 
 Создаем и запускаем контейнер из образа:
 
-```
+```console
 sudo docker run -it ubuntu:16.04 /bin/bash
 echo 'Hello world!' > /tmp/file
 exit
@@ -2147,7 +4411,7 @@ exit
 
 Вывод списка всех контейнеров
 
-```
+```console
 sudo docker ps -a
 CONTAINER ID        IMAGE               COMMAND             CREATED             STATUS                     PORTS               NAMES
 5762a59a8283        ubuntu:16.04        "/bin/bash"         13 seconds ago      Exited (0) 3 seconds ago                       stupefied_fermi
@@ -2155,14 +4419,14 @@ CONTAINER ID        IMAGE               COMMAND             CREATED             
 
 Создание образа из контейнера
 
-```
+```console
 sudo  docker commit 5762a59a8283 kovtalex/ubuntu-tmp-file
 sha256:68b5ebc9d2dedfc49276fa5e5c28015f4891693346579b98572b6dd06287a07f
 ```
 
 Вывод списка образов
 
-```
+```console
 sudo docker images
 REPOSITORY                 TAG                 IMAGE ID            CREATED             SIZE
 kovtalex/ubuntu-tmp-file   latest              68b5ebc9d2de        14 seconds ago      123MB
@@ -2175,7 +4439,7 @@ kovtalex/ubuntu-tmp-file   latest              68b5ebc9d2de        14 seconds ag
 - Далее gcloud auth application-default login
 - Устанавливаем Docker machine <https://docs.docker.com/machine/install-machine/>
 
-```
+```console
 - docker-machine - встроенный в докер инструмент для создания хостов и установки на них docker engine. Имеет поддержку облаков и систем виртуализации (Virtualbox, GCP и др.)
 - Команда создания - docker-machine create <имя>. Имен может быть много, переключение между ними через eval $(docker-machine env <имя>). Переключение на локальный докер
 - eval $(docker-machine env --unset). Удаление - docker-machine rm <имя>.
@@ -2186,7 +4450,7 @@ kovtalex/ubuntu-tmp-file   latest              68b5ebc9d2de        14 seconds ag
 - выполняем  export GOOGLE_PROJECT=docker-258208
 - выполняем
 
-```
+```console
  docker-machine create --driver google \
  --google-machine-image https://www.googleapis.com/compute/v1/projects/ubuntu-os-cloud/global/images/family/ubuntu-1604-lts \
  --google-machine-type n1-standard-1 \
@@ -2196,7 +4460,7 @@ kovtalex/ubuntu-tmp-file   latest              68b5ebc9d2de        14 seconds ag
 
 - docker-machine ls - проверяем, что наш Docker-хост успешно создан
 
-```
+```console
 NAME          ACTIVE   DRIVER   STATE     URL                        SWARM   DOCKER     ERRORS
 docker-host   -        google   Running   tcp://35.233.48.104:2376           v19.03.4  
 ```
@@ -2219,7 +4483,7 @@ docker-host   -        google   Running   tcp://35.233.48.104:2376           v19
 
 mongod.conf
 
-```
+```yml
 # Where and how to store data.
 storage:
   dbPath: /var/lib/mongodb
@@ -2240,7 +4504,7 @@ net:
 
 start.sh
 
-```
+```console
 #!/bin/bash
 
 /usr/bin/mongod --fork --logpath /var/log/mongod.log --config /etc/mongodb.conf
@@ -2252,13 +4516,13 @@ cd /reddit && puma || exit
 
 db_config
 
-```
+```console
 DATABASE_URL=127.0.0.1
 ```
 
 Dockerfile
 
-```
+```dockerfile
 FROM ubuntu:16.04
 
 RUN apt-get update
@@ -2278,7 +4542,7 @@ CMD ["/start.sh"]
 
 Собираем образ
 
-```
+```console
  docker build -t reddit:latest .
 
 - Точка в конце обязательна, она указывает на путь до Docker-контекста
@@ -2287,7 +4551,7 @@ CMD ["/start.sh"]
 
 Посмотрим на все образы (в том числе промежуточные)
 
-```
+```console
 docker images -a
 REPOSITORY             TAG                 IMAGE ID            CREATED             SIZE
 kovtalex/otus-reddit   1.0                 b9dc7f4c5c8d        33 hours ago        691MB
@@ -2295,7 +4559,7 @@ kovtalex/otus-reddit   1.0                 b9dc7f4c5c8d        33 hours ago     
 
 Запускаем наш контейнер
 
-```
+```console
 docker run --name reddit -d --network=host reddit:latest
 
 9bfcfa27173e268fa2f0b2bc7131d76269dd31b6cf8b5c3e2c099d985ad9d949
@@ -2303,7 +4567,7 @@ docker run --name reddit -d --network=host reddit:latest
 
 Проверим результат
 
-```
+```console
 docker-machine ls
 
 NAME          ACTIVE   DRIVER   STATE     URL                        SWARM   DOCKER     ERRORS
@@ -2312,7 +4576,7 @@ docker-host   *        google   Running   tcp://35.233.48.104:2376           v19
 
 Разрешим входящий TCP-трафик на порт 9292 выполнив команду
 
-```
+```console
 gcloud compute firewall-rules create reddit-app \
 --allow tcp:9292 \
 --target-tags=docker-machine \
@@ -2335,28 +4599,28 @@ Docker Hub - это облачный registry сервис от компании
 
 Загрузим наш образ на docker hub для использования в будущем:
 
-```
+```console
 docker tag reddit:latest kovtalex/otus-reddit:1.0
 docker push kovtalex/otus-reddit:1.0
 ```
 
-Т.к. теперь наш образ есть в докер хабе, то мы можем запустить его не только в докер хосте в GCP, но и в вашем локальном докере или на другом хосте.
+Т.к. теперь наш образ есть в докер хабе, то мы можем запустить его не только в докер хосте в GCP, но и в нашем локальном докере или на другом хосте.
 
 Выполним в другой консоли
 
-```
+```console
 docker run --name reddit -d -p 9292:9292 kovtalex/otus-reddit:1.0
 ```
 
 И проверим, что в локальный докер скачался загруженный ранее образ и приложение работает
 
-### Задание со *
+- Задание со *
 
 Для выполнения задания со * в виде прототипа в директории /docker-monolith/infra/ было релизовано:
 
 - поднятие инстансов с помощью Terraform (количество инстансов задается переменной node_count в variables.json)
 
-```
+```console
 terrform
 ├── backend.tf
 ├── main.tf
@@ -2379,7 +4643,7 @@ terraform apply -auto-approve
 - Написан плейбук Ansible с ипользованием динамического инвентори для установки докера на хост: docker_host.yml
 - Написан плейбук Ansible с ипользованием динамического инвентори для запуска образа приложения на хосте: deploy.yml
 
-```
+```console
 ansible
 ├── ansible.cfg
 ├── inventory.gcp.yml
@@ -2394,7 +4658,7 @@ ansible-playbook playbooks/deploy.yml
 
 - Написан шаблон для Packer по созданию образа с уже установленным Docker
 
-```
+```console
 packer
 ├── docker.json
 └── variables.json
