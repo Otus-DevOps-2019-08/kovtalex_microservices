@@ -1064,9 +1064,9 @@ kubectl apply -f . -n dev
 ```console
 kubectl get nodes -o wide
 
-NAME                                          STATUS   ROLES    AGE    VERSION           INTERNAL-IP   EXTERNAL-IP     OS-IMAGE                             KERNEL-VERSION   CONTAINER-RUNTIME
-gke-k8s-cluster1-default-pool-705f8165-2h9k   Ready    <none>   5m4s   v1.13.11-gke.14   10.132.0.34   34.76.147.108   Container-Optimized OS from Google   4.14.138+        docker://18.9.7
-gke-k8s-cluster1-default-pool-705f8165-qm9v   Ready    <none>   5m3s   v1.13.11-gke.14   10.132.0.33   34.77.229.184   Container-Optimized OS from Google   4.14.138+        docker://18.9.7
+NAME                                      STATUS     ROLES    AGE    VERSION           INTERNAL-IP   EXTERNAL-IP      OS-IMAGE                             KERNEL-VERSION   CONTAINER-RUNTIME
+gke-k8s-cluster-node-pool-a894d092-c3sg   Ready      <none>   20h    v1.13.11-gke.14   10.132.0.53   35.195.195.166   Container-Optimized OS from Google   4.14.138+        docker://18.9.7
+gke-k8s-cluster-node-pool-a894d092-wqtn   NotReady   <none>   122m   v1.13.11-gke.14   10.132.0.54   34.77.138.193    Container-Optimized OS from Google   4.14.138+        docker://18.9.7
 ```
 
 Найдем порт публикации сервиса ui:
@@ -1078,7 +1078,7 @@ Type:                     NodePort
 NodePort:                 <unset>  32093/TCP
 ```
 
-Идем по адресу <http://34.76.147.108:32093> и <http://34.77.229.184:32093> и проверяем работу нашего приложения.
+Идем по адресу <http://35.195.195.166:32093> и <http://34.77.138.193:32093> и проверяем работу нашего приложения.
 
 > Так как по умолчанию у нас включен HTTP load balancing, то мы можем легко поднять Ingress для удобства доступа к приложению пользователя по 80 порту с балансировкой: <http://34.107.150.169/>
 
