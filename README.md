@@ -2,6 +2,146 @@
 
 [![Build Status](https://travis-ci.com/Otus-DevOps-2019-08/kovtalex_microservices.svg?branch=master)](https://travis-ci.com/Otus-DevOps-2019-08/kovtalex_microservices)
 
+## Kubernetes. Networks and Storages
+
+### Service
+
+**Service** - определяет **конечные узлы доступа** (Endpoint’ы):
+
+- селекторные сервисы (k8s сам находит POD-ы по label’ам)
+- безселекторные сервисы (мы вручную описываем конкретные endpoint’ы)
+
+и **способ коммуникации** с ними (тип (type) сервиса):
+
+- ClusterIP - дойти до сервиса можно только изнутри кластера
+- nodePort - клиент снаружи кластера приходит на опубликованный порт
+- LoadBalancer - клиент приходит на облачный (aws elb, Google gclb) ресурс балансировки
+- ExternalName - внешний ресурс по отношению к кластеру
+
+Вспомним, как выглядели Service’ы:
+
+post-service.yml
+
+```yml
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: post
+  labels:
+    app: reddit
+    component: post
+spec:
+  ports:
+  - port: 5000
+    protocol: TCP
+    targetPort: 5000
+  selector:
+    app: reddit
+    component: post
+```
+
+Это селекторный сервис типа **ClusetrIP** (тип не указан, т.к. этот тип по-умолчанию)
+> selector:
+>
+> app: reddit
+>
+> component: post
+
+**ClusterIP** - это виртуальный (в реальности нет интерфейса, pod’а или машины с таким адресом) IP-адрес из диапазона адресов для работы внутри, скрывающий за собой IP-адреса реальных POD-ов. Сервису любого **типа** (кроме ExternalName) назначается этот IP-адрес.
+
+```console
+kubectl get services -n dev
+
+NAME         TYPE        CLUSTER-IP   EXTERNAL-IP   PORT(S)          AGE
+comment      ClusterIP   10.0.2.59    <none>        9292/TCP         5h16m
+comment-db   ClusterIP   10.0.8.157   <none>        27017/TCP        5h16m
+mongodb      ClusterIP   10.0.11.37   <none>        27017/TCP        5h16m
+post         ClusterIP   10.0.4.39    <none>        5000/TCP         5h16m
+post-db      ClusterIP   10.0.7.234   <none>        27017/TCP        5h16m
+ui           NodePort    10.0.6.3     <none>        9292:32093/TCP   5h16m
+```
+
+### Kube-dns
+
+Отметим, что **Service** - это лишь абстракция и описание того, как получить доступ к сервису. Но опирается она на реальные механизмы и объекты: DNS-сервер, балансировщики, iptables. Для того, чтобы дойти до сервиса, нам нужно узнать его адрес по имени. Kubernetes не имеет своего собственного DNSсервера для разрешения имен. Поэтому используется плагин **kube-dns** (это тоже Pod).
+
+Его задачи:
+
+- ходить в API Kubernetes’a и отслеживать Service-объекты
+- заносить DNS-записи о Service’ах в собственную базу
+- предоставлять DNS-сервис для разрешения имен в IP-адреса (как внутренних, так и внешних)
+
+Можете убедиться, что при отключенном **kube-dns** сервисе связность между компонентами reddit-app пропадет и он перестанет работать.
+
+- Проскейлим в 0 сервис, который следит, чтобы dns-kube подов всегда хватало:
+
+```console
+kubectl scale deployment --replicas 0 -n kube-system kube-dns-autoscaler
+```
+
+- Проскейлим в 0 сам kube-dns:
+
+```console
+kubectl scale deployment --replicas 0 -n kube-system kube-dns
+```
+
+
+
+
+
+➜  reddit git:(kubernetes-3) ✗ kubectl get service  -n dev --selector component=ui
+NAME   TYPE           CLUSTER-IP   EXTERNAL-IP   PORT(S)        AGE
+ui     LoadBalancer   10.0.6.3     <pending>     80:31433/TCP   5h29m
+➜  reddit git:(kubernetes-3) ✗ kubectl get service  -n dev --selector component=ui
+NAME   TYPE           CLUSTER-IP   EXTERNAL-IP   PORT(S)        AGE
+ui     LoadBalancer   10.0.6.3     35.230.0.46   80:31433/TCP   5h30m
+
+
+
+➜  kovtalex_microservices git:(kubernetes-3) ✗  kubectl get ingress -n dev
+NAME   HOSTS   ADDRESS          PORTS   AGE
+ui     *       34.107.150.169   80      103m
+
+openssl req -x509 -nodes -days 365 -newkey rsa:2048 -keyout tls.key -out tls.crt -subj "/CN=34.107.150.169"
+
+
+ kubectl create secret tls ui-ingress --key tls.key --cert tls.crt -n dev
+
+➜  kubectl describe secret ui-ingress -n dev
+Name:         ui-ingress
+Namespace:    dev
+Labels:       <none>
+Annotations:  <none>
+
+Type:  kubernetes.io/tls
+
+Data
+====
+tls.crt:  1127 bytes
+tls.key:  1704 bytes
+
+➜  reddit git:(kubernetes-3) ✗ gcloud beta container clusters list
+NAME         LOCATION    MASTER_VERSION  MASTER_IP        MACHINE_TYPE  NODE_VERSION    NUM_NODES  STATUS
+k8s-cluster  us-west1-b  1.14.10-gke.17  104.196.254.214  g1-small      1.14.10-gke.17  2          RUNNING
+
+gcloud beta container clusters update k8s-cluster --zone=europe-west1-b --update-addons=NetworkPolicy=ENABLED
+gcloud beta container clusters update k8s-cluster --zone=europe-west1-b --enable-network-policy
+
+
+gcloud compute disks create --size=25GB --zone=europe-west1-b reddit-mongo-disk
+
+
+
+➜  reddit git:(kubernetes-3) ✗  kubectl get persistentvolume -n dev
+NAME                                       CAPACITY   ACCESS MODES   RECLAIM POLICY   STATUS      CLAIM                   STORAGECLASS   REASON   AGE
+pvc-197f4dc0-53c1-11ea-97a3-42010a840fde   10Gi       RWO            Delete           Bound       dev/mongo-pvc-dynamic   fast                    88s
+pvc-acdce3a9-5322-11ea-97a3-42010a840fde   15Gi       RWO            Delete           Bound       dev/mongo-pvc           standard                18h
+reddit-mongo-disk 
+
+
+
+
 ## Kubernetes. Запуск кластера и приложения. Модель безопасности
 
 ### Развернуть локальное окружение для работы с Kubernetes
