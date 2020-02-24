@@ -7,4 +7,7 @@
 vault.key
 *.bak
 .env
-Gitlab_ci/
+Gitlab_ci/ui/
+Gitlab_ci/reddit-deploy/
+Gitlab_ci/comment/
+1/
