@@ -7,3 +7,4 @@
 vault.key
 *.bak
 .env
+Gitlab_ci/

@@ -2,6 +2,170 @@
 
 [![Build Status](https://travis-ci.com/Otus-DevOps-2019-08/kovtalex_microservices.svg?branch=master)](https://travis-ci.com/Otus-DevOps-2019-08/kovtalex_microservices)
 
+
+
+
+
+helm install reddit --name reddit-test
+NAME:   reddit-test
+LAST DEPLOYED: Mon Feb 24 22:53:35 2020
+NAMESPACE: default
+STATUS: DEPLOYED
+
+RESOURCES:
+==> v1/Deployment
+NAME                 AGE
+reddit-test-comment  1s
+reddit-test-mongodb  1s
+reddit-test-post     1s
+reddit-test-ui       1s
+
+==> v1/PersistentVolumeClaim
+NAME                 AGE
+reddit-test-mongodb  1s
+
+==> v1/Pod(related)
+NAME                                  AGE
+reddit-test-comment-67f446fd65-tlcfm  1s
+reddit-test-mongodb-5f647684fd-5jzvq  1s
+reddit-test-post-6d77f85b68-7xf9h     1s
+reddit-test-ui-5587d6c6d6-52s49       1s
+
+==> v1/Service
+NAME                 AGE
+reddit-test-comment  1s
+reddit-test-mongodb  1s
+reddit-test-post     1s
+reddit-test-ui       1s
+
+==> v1beta1/Ingress
+NAME            AGE
+reddit-test-ui  1s
+
+
+kubectl delete deployment tiller-deploy -n kube-system
+
+helm plugin install https://github.com/rimusz/helm-tiller
+
+
+helm tiller run -- helm upgrade --install --wait --namespace=reddit-ns reddit reddit/
+Installed Helm version v2.16.3
+Installed Tiller version v2.16.3
+Helm and Tiller are the same version!
+Starting Tiller...
+Tiller namespace: kube-system
+Running: helm upgrade --install --wait --namespace=reddit-ns reddit reddit/
+
+Release "reddit" does not exist. Installing it now.
+NAME:   reddit
+LAST DEPLOYED: Mon Feb 24 23:07:22 2020
+NAMESPACE: reddit-ns
+STATUS: DEPLOYED
+
+RESOURCES:
+==> v1/Deployment
+NAME            AGE
+reddit-comment  38s
+reddit-mongodb  38s
+reddit-post     38s
+reddit-ui       38s
+
+==> v1/PersistentVolumeClaim
+NAME            AGE
+reddit-mongodb  39s
+
+==> v1/Pod(related)
+NAME                             AGE
+reddit-comment-6b9948f5bc-l2g8l  38s
+reddit-mongodb-956b47dc7-hdgvs   38s
+reddit-post-c4b7df4b8-9qqj6      38s
+reddit-ui-86c87d7467-mx6kr       38s
+
+==> v1/Service
+NAME            AGE
+reddit-comment  39s
+reddit-mongodb  39s
+reddit-post     39s
+reddit-ui       39s
+
+==> v1beta1/Ingress
+NAME       AGE
+reddit-ui  38s
+
+
+Stopping Tiller...
+
+
+
+kubectl get ingress -n reddit-ns
+NAME        HOSTS   ADDRESS        PORTS   AGE
+reddit-ui   *       35.241.63.88   80      84s
+
+
+brew install helm@2
+brew install helm
+cd /usr/local/bin
+ln -s /usr/local/opt/helm@2/bin/tiller tiller
+ln -s /usr/local/opt/helm@2/bin/helm helm2
+ln -s helm helm3
+
+
+kubectl create ns new-helm
+
+helm3 upgrade --install --namespace=new-helm --wait reddit-release reddit/
+Release "reddit-release" does not exist. Installing it now.
+NAME: reddit-release
+LAST DEPLOYED: Mon Feb 24 23:30:24 2020
+NAMESPACE: new-helm
+STATUS: deployed
+REVISION: 1
+TEST SUITE: None
+
+helm init --service-account tiller --upgrade
+
+kubectl get pods -n kube-system --selector app=helm
+
+
+
+helm upgrade gitlab . -f values.yaml
+
+
+kubectl get service -n nginx-ingress nginx 
+NAME    TYPE           CLUSTER-IP    EXTERNAL-IP      PORT(S)                                   AGE
+nginx   LoadBalancer   10.64.15.27   35.187.174.131   80:32757/TCP,443:31324/TCP,22:30117/TCP   8m18s
+
+kubectl get pods
+NAME                                        READY   STATUS    RESTARTS   AGE
+gitlab-gitlab-74bbf4bddf-fqlvz              1/1     Running   0          8m18s
+gitlab-gitlab-postgresql-6b4477dd4c-7l7ft   1/1     Running   0          8m18s
+gitlab-gitlab-redis-5b6db96bf9-wqrmw        1/1     Running   0          8m18s
+gitlab-gitlab-runner-844d9b68b7-42s9s       1/1     Running   5          8m18s
+
+git init
+git remote add origin http://gitlab-gitlab/kovtalex/ui.git
+git add .
+git commit -m “init”
+git push origin master
+
+git init
+git remote add origin http://gitlab-gitlab/kovtalex/post.git
+git add .
+git commit -m “init”
+git push origin master
+
+git init
+git remote add origin http://gitlab-gitlab/kovtalex/comment.git
+git add .
+git commit -m “init”
+git push origin master
+
+git init
+git remote add origin http://gitlab-gitlab/kovtalex/reddit-deploy.git
+git add .
+git commit -m “init”
+git push origin master
+
+
 ## Kubernetes. Networks and Storages
 
 ### Service
@@ -89,7 +253,7 @@ kubectl scale deployment --replicas 0 -n kube-system kube-dns
 - Попробуем достучатсья по имени до любого сервиса:
 
 ```console:
- ubectl exec -ti -n dev post-5f6bd9dfc7-wcbjl ping comment
+ kubectl exec -ti -n dev post-5f6bd9dfc7-wcbjl ping comment
 
 ping: bad address 'comment'
 command terminated with exit code 1
@@ -116,9 +280,9 @@ Kubernetes не имеет в комплекте механизма органи
 
 Он работает **только** вместе с платформой **GCP** и, по-сути занимается тем, что настраивает google-сети для передачи трафика Kubernetes. Поэтому в конфигурации Docker сейчас мы не увидим никаких Overlay-сетей.
 
-Посмотреть правила, согласно которым трафик отправляется на ноды можно здесь: <https://console.cloud.google.com/networking/routes/>
+Посмотреть правила, согласно которым трафик отправляется на ноды можно здесь: <https://console.cloud.google.com/networking/routes/
 
-### NndePort
+### NodePort
 
 Service с типом **NodePort** - похож на сервис типа **ClusterIP**, только к нему прибавляется прослушивание портов нод (всех нод) для доступа к сервисам **снаружи**. При этом **ClusterIP** также назначается этому сервису для доступа к нему изнутри кластера.
 
