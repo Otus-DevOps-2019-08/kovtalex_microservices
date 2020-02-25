@@ -7,6 +7,7 @@ image:
   repository: kovtalex/ui
   tag: logging
 
+# Будем использоват nginx-ingress, который был поставлен вместе с gitlab (так быстрее и правила более гибкие, чем у GCP)
 ingress:
   class: nginx
 
