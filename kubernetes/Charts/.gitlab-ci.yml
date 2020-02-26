@@ -22,7 +22,7 @@ staging:
     CI_APPLICATION_REPOSITORY: $CI_REGISTRY/$CI_PROJECT_PATH
     CI_APPLICATION_TAG: $CI_COMMIT_REF_SLUG
     CI_CONTAINER_NAME: ci_job_build_${CI_JOB_ID}
-    TILLER_NAMESPACE: "kube-system"    
+    TILLER_NAMESPACE: "kube-system"
   environment:
     name: staging
     url: http://staging
@@ -32,7 +32,6 @@ staging:
     kubernetes: active
   before_script:    
   # installing dependencies
-    - [[ "$TRACE" ]] && set -x
     - apk add -U openssl curl tar gzip bash ca-certificates git
     - wget -q -O /etc/apk/keys/sgerrand.rsa.pub https://alpine-pkgs.sgerrand.com/sgerrand.rsa.pub
     - wget https://github.com/sgerrand/alpine-pkg-glibc/releases/download/2.23-r3/glibc-2.23-r3.apk
@@ -55,7 +54,6 @@ staging:
         echo "Failed to init Tiller."
         return 1
       fi
-      echo ""
   script:
     - echo $KUBE_NAMESPACE
     - track="${1-stable}"
@@ -93,7 +91,6 @@ production:
     kubernetes: active
   before_script:    
   # installing dependencies
-    - [[ "$TRACE" ]] && set -x
     - apk add -U openssl curl tar gzip bash ca-certificates git
     - wget -q -O /etc/apk/keys/sgerrand.rsa.pub https://alpine-pkgs.sgerrand.com/sgerrand.rsa.pub
     - wget https://github.com/sgerrand/alpine-pkg-glibc/releases/download/2.23-r3/glibc-2.23-r3.apk
@@ -116,7 +113,6 @@ production:
         echo "Failed to init Tiller."
         return 1
       fi
-      echo ""
   script:
     - echo $KUBE_NAMESPACE
     - track="${1-stable}"
