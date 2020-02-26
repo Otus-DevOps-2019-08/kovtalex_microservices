@@ -2,6 +2,285 @@
 
 [![Build Status](https://travis-ci.com/Otus-DevOps-2019-08/kovtalex_microservices.svg?branch=master)](https://travis-ci.com/Otus-DevOps-2019-08/kovtalex_microservices)
 
+
+helm install stable/nginx-ingress --name nginx
+
+```console
+helm install stable/nginx-ingress --name nginx
+NAME:   nginx
+LAST DEPLOYED: Wed Feb 26 21:54:16 2020
+NAMESPACE: default
+STATUS: DEPLOYED
+
+RESOURCES:
+==> v1/ClusterRole
+NAME                 AGE
+nginx-nginx-ingress  0s
+
+==> v1/ClusterRoleBinding
+NAME                 AGE
+nginx-nginx-ingress  0s
+
+==> v1/Deployment
+NAME                                 AGE
+nginx-nginx-ingress-controller       0s
+nginx-nginx-ingress-default-backend  0s
+
+==> v1/Pod(related)
+NAME                                                  AGE
+nginx-nginx-ingress-controller-69f74c6f5c-4d557       0s
+nginx-nginx-ingress-default-backend-5dd86bd697-dcq2t  0s
+
+==> v1/Role
+NAME                 AGE
+nginx-nginx-ingress  0s
+
+==> v1/RoleBinding
+NAME                 AGE
+nginx-nginx-ingress  0s
+
+==> v1/Service
+NAME                                 AGE
+nginx-nginx-ingress-controller       0s
+nginx-nginx-ingress-default-backend  0s
+
+==> v1/ServiceAccount
+NAME                         AGE
+nginx-nginx-ingress          0s
+nginx-nginx-ingress-backend  0s
+
+
+NOTES:
+The nginx-ingress controller has been installed.
+It may take a few minutes for the LoadBalancer IP to be available.
+You can watch the status by running 'kubectl --namespace default get services -o wide -w nginx-nginx-ingress-controller'
+
+An example Ingress that makes use of the controller:
+
+  apiVersion: extensions/v1beta1
+  kind: Ingress
+  metadata:
+    annotations:
+      kubernetes.io/ingress.class: nginx
+    name: example
+    namespace: foo
+  spec:
+    rules:
+      - host: www.example.com
+        http:
+          paths:
+            - backend:
+                serviceName: exampleService
+                servicePort: 80
+              path: /
+    # This section is only required if TLS is to be enabled for the Ingress
+    tls:
+        - hosts:
+            - www.example.com
+          secretName: example-tls
+
+If TLS is enabled for the Ingress, a Secret containing the certificate and key must also be provided:
+
+  apiVersion: v1
+  kind: Secret
+  metadata:
+    name: example-tls
+    namespace: foo
+  data:
+    tls.crt: <base64 encoded cert>
+    tls.key: <base64 encoded key>
+  type: kubernetes.io/tls
+  ```
+
+```console
+ubectl get svc
+NAME                                  TYPE           CLUSTER-IP     EXTERNAL-IP     PORT(S)                                             AGE
+nginx-nginx-ingress-controller        LoadBalancer   10.64.1.234   35.205.119.29   80:31019/TCP,443:30234/TCP   112s
+```
+
+cd kubernetes/Charts && helm fetch --untar stable/prometheus
+
+```console
+cd prometheus &&  helm upgrade prom . -f custom_values.yml --install
+Release "prom" does not exist. Installing it now.
+NAME:   prom
+LAST DEPLOYED: Wed Feb 26 22:02:41 2020
+NAMESPACE: default
+STATUS: DEPLOYED
+
+RESOURCES:
+==> v1/ConfigMap
+NAME                    AGE
+prom-prometheus-server  1s
+
+==> v1/Deployment
+NAME                    AGE
+prom-prometheus-server  1s
+
+==> v1/PersistentVolumeClaim
+NAME                    AGE
+prom-prometheus-server  1s
+
+==> v1/Pod(related)
+NAME                                     AGE
+prom-prometheus-server-6676c6dd8f-dxlrv  1s
+
+==> v1/Service
+NAME                    AGE
+prom-prometheus-server  1s
+
+==> v1/ServiceAccount
+NAME                    AGE
+prom-prometheus-server  1s
+
+==> v1beta1/Ingress
+NAME                    AGE
+prom-prometheus-server  1s
+
+
+NOTES:
+The Prometheus server can be accessed via port 80 on the following DNS name from within your cluster:
+prom-prometheus-server.default.svc.cluster.local
+
+From outside the cluster, the server URL(s) are:
+http://reddit-prometheus
+
+
+#################################################################################
+######   WARNING: Pod Security Policy has been moved to a global property.  #####
+######            use .Values.podSecurityPolicy.enabled with pod-based      #####
+######            annotations                                               #####
+######            (e.g. .Values.nodeExporter.podSecurityPolicy.annotations) #####
+#################################################################################
+
+
+
+For more information on running Prometheus, visit:
+https://prometheus.io/
+```
+
+```yml
+helm upgrade  reddit-test ./reddit --install
+Release "reddit-test" does not exist. Installing it now.
+NAME:   reddit-test
+LAST DEPLOYED: Wed Feb 26 22:32:53 2020
+NAMESPACE: default
+STATUS: DEPLOYED
+
+RESOURCES:
+==> v1/Deployment
+NAME                 AGE
+reddit-test-comment  1s
+reddit-test-mongodb  1s
+reddit-test-post     1s
+reddit-test-ui       1s
+
+==> v1/PersistentVolumeClaim
+NAME                 AGE
+reddit-test-mongodb  1s
+
+==> v1/Pod(related)
+NAME                                  AGE
+reddit-test-comment-67f446fd65-kfjfr  1s
+reddit-test-mongodb-5f647684fd-jx92z  1s
+reddit-test-post-6d77f85b68-8fxfp     1s
+reddit-test-ui-5587d6c6d6-zx55c       1s
+
+==> v1/Service
+NAME                 AGE
+reddit-test-comment  1s
+reddit-test-mongodb  1s
+reddit-test-post     1s
+reddit-test-ui       1s
+
+==> v1beta1/Ingress
+NAME            AGE
+reddit-test-ui  1s
+```
+
+```yml
+helm upgrade production --namespace production ./reddit --install
+Release "production" does not exist. Installing it now.
+NAME:   production
+LAST DEPLOYED: Wed Feb 26 22:33:43 2020
+NAMESPACE: production
+STATUS: DEPLOYED
+
+RESOURCES:
+==> v1/Deployment
+NAME                AGE
+production-comment  1s
+production-mongodb  1s
+production-post     1s
+production-ui       1s
+
+==> v1/PersistentVolumeClaim
+NAME                AGE
+production-mongodb  1s
+
+==> v1/Pod(related)
+NAME                                 AGE
+production-comment-c5b77989f-qxqcf   1s
+production-mongodb-59c7fbb97b-xcqkn  1s
+production-post-6d47954668-sjzs8     1s
+production-ui-5b987c66d-fdtq6        1s
+
+==> v1/Service
+NAME                AGE
+production-comment  1s
+production-mongodb  1s
+production-post     1s
+production-ui       1s
+
+==> v1beta1/Ingress
+NAME           AGE
+```
+
+
+```
+helm upgrade staging --namespace staging ./reddit --install
+Release "staging" does not exist. Installing it now.
+NAME:   staging
+LAST DEPLOYED: Wed Feb 26 22:34:51 2020
+NAMESPACE: staging
+STATUS: DEPLOYED
+
+RESOURCES:
+==> v1/Deployment
+NAME             AGE
+staging-comment  1s
+staging-mongodb  1s
+staging-post     1s
+staging-ui       1s
+
+==> v1/PersistentVolumeClaim
+NAME             AGE
+staging-mongodb  1s
+
+==> v1/Pod(related)
+NAME                              AGE
+staging-comment-75c967b5c7-wg7z8  1s
+staging-mongodb-78d76b5784-4trdr  1s
+staging-post-5d6fdd5f7b-8648l     1s
+staging-ui-c4ddf7488-tvkb9        1s
+
+==> v1/Service
+NAME             AGE
+staging-comment  1s
+staging-mongodb  1s
+staging-post     1s
+staging-ui       1s
+
+==> v1beta1/Ingress
+NAME        AGE
+staging-ui  1s
+```
+
+
+
+
+
+
 ## CI/CD в Kubernetes
 
 ### Helm
