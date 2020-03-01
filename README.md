@@ -277,8 +277,25 @@ staging-ui  1s
 ```
 
 
+helm upgrade --install grafana stable/grafana --set "adminPassword=admin" \
+--set "service.type=NodePort" \
+--set "ingress.enabled=true" \
+--set "ingress.hosts={reddit-grafana}"
 
 
+
+kubectl label node gke-k8s-cluster-bigpool-60ecbd99-kzh8 elastichost=true   
+node/gke-k8s-cluster-bigpool-60ecbd99-kzh8 labeled
+
+
+helm upgrade --install kibana stable/kibana \
+--set "ingress.enabled=true" \
+--set "ingress.hosts={reddit-kibana}" \
+--set "env.ELASTICSEARCH_URL=http://elasticsearch-logging:9200" \
+--set "service.type=NodePort" \
+--version 0.1.1
+
+35.205.119.29 reddit-kibana reddit reddit-prometheus reddit-grafana reddit-non-prod production staging prod
 
 
 ## CI/CD в Kubernetes
