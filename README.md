@@ -2,301 +2,1279 @@
 
 [![Build Status](https://travis-ci.com/Otus-DevOps-2019-08/kovtalex_microservices.svg?branch=master)](https://travis-ci.com/Otus-DevOps-2019-08/kovtalex_microservices)
 
+## Kubernetes. Мониторинг и логирование
 
-helm install stable/nginx-ingress --name nginx
+### Подготовка
 
-```console
-helm install stable/nginx-ingress --name nginx
-NAME:   nginx
-LAST DEPLOYED: Wed Feb 26 21:54:16 2020
-NAMESPACE: default
-STATUS: DEPLOYED
+У нас должен быть развернуть кластер k8s:
 
-RESOURCES:
-==> v1/ClusterRole
-NAME                 AGE
-nginx-nginx-ingress  0s
+- минимум 2 ноды g1-small (1,5 ГБ)
+- минимум 1 нода n1-standard-2 (7,5 ГБ)
 
-==> v1/ClusterRoleBinding
-NAME                 AGE
-nginx-nginx-ingress  0s
+В настройках:
 
-==> v1/Deployment
-NAME                                 AGE
-nginx-nginx-ingress-controller       0s
-nginx-nginx-ingress-default-backend  0s
+- Stackdriver Logging - Отключен
+- Stackdriver Monitoring - Отключен
+- Устаревшие права доступа - Включено
 
-==> v1/Pod(related)
-NAME                                                  AGE
-nginx-nginx-ingress-controller-69f74c6f5c-4d557       0s
-nginx-nginx-ingress-default-backend-5dd86bd697-dcq2t  0s
-
-==> v1/Role
-NAME                 AGE
-nginx-nginx-ingress  0s
-
-==> v1/RoleBinding
-NAME                 AGE
-nginx-nginx-ingress  0s
-
-==> v1/Service
-NAME                                 AGE
-nginx-nginx-ingress-controller       0s
-nginx-nginx-ingress-default-backend  0s
-
-==> v1/ServiceAccount
-NAME                         AGE
-nginx-nginx-ingress          0s
-nginx-nginx-ingress-backend  0s
-
-
-NOTES:
-The nginx-ingress controller has been installed.
-It may take a few minutes for the LoadBalancer IP to be available.
-You can watch the status by running 'kubectl --namespace default get services -o wide -w nginx-nginx-ingress-controller'
-
-An example Ingress that makes use of the controller:
-
-  apiVersion: extensions/v1beta1
-  kind: Ingress
-  metadata:
-    annotations:
-      kubernetes.io/ingress.class: nginx
-    name: example
-    namespace: foo
-  spec:
-    rules:
-      - host: www.example.com
-        http:
-          paths:
-            - backend:
-                serviceName: exampleService
-                servicePort: 80
-              path: /
-    # This section is only required if TLS is to be enabled for the Ingress
-    tls:
-        - hosts:
-            - www.example.com
-          secretName: example-tls
-
-If TLS is enabled for the Ingress, a Secret containing the certificate and key must also be provided:
-
-  apiVersion: v1
-  kind: Secret
-  metadata:
-    name: example-tls
-    namespace: foo
-  data:
-    tls.crt: <base64 encoded cert>
-    tls.key: <base64 encoded key>
-  type: kubernetes.io/tls
-  ```
+Из Helm-чарта установим ingress-контроллер nginx:
 
 ```console
-ubectl get svc
+helm install stable/nginx-ingress --name nginx
+```
+
+Найдем IP-адрес, выданный nginx’у:
+
+```console
+kubectl get svc
+
 NAME                                  TYPE           CLUSTER-IP     EXTERNAL-IP     PORT(S)                                             AGE
 nginx-nginx-ingress-controller        LoadBalancer   10.64.1.234   35.205.119.29   80:31019/TCP,443:30234/TCP   112s
 ```
 
-cd kubernetes/Charts && helm fetch --untar stable/prometheus
+Добавим в /etc/hosts:
 
 ```console
-cd prometheus &&  helm upgrade prom . -f custom_values.yml --install
-Release "prom" does not exist. Installing it now.
-NAME:   prom
-LAST DEPLOYED: Wed Feb 26 22:02:41 2020
-NAMESPACE: default
-STATUS: DEPLOYED
-
-RESOURCES:
-==> v1/ConfigMap
-NAME                    AGE
-prom-prometheus-server  1s
-
-==> v1/Deployment
-NAME                    AGE
-prom-prometheus-server  1s
-
-==> v1/PersistentVolumeClaim
-NAME                    AGE
-prom-prometheus-server  1s
-
-==> v1/Pod(related)
-NAME                                     AGE
-prom-prometheus-server-6676c6dd8f-dxlrv  1s
-
-==> v1/Service
-NAME                    AGE
-prom-prometheus-server  1s
-
-==> v1/ServiceAccount
-NAME                    AGE
-prom-prometheus-server  1s
-
-==> v1beta1/Ingress
-NAME                    AGE
-prom-prometheus-server  1s
-
-
-NOTES:
-The Prometheus server can be accessed via port 80 on the following DNS name from within your cluster:
-prom-prometheus-server.default.svc.cluster.local
-
-From outside the cluster, the server URL(s) are:
-http://reddit-prometheus
-
-
-#################################################################################
-######   WARNING: Pod Security Policy has been moved to a global property.  #####
-######            use .Values.podSecurityPolicy.enabled with pod-based      #####
-######            annotations                                               #####
-######            (e.g. .Values.nodeExporter.podSecurityPolicy.annotations) #####
-#################################################################################
-
-
-
-For more information on running Prometheus, visit:
-https://prometheus.io/
+35.205.119.29 reddit-kibana reddit reddit-prometheus reddit-grafana reddit-non-prod production staging prod
 ```
 
+### Мониторинг
+
+#### Стек
+
+В задании будем использовать уже знакомые нам инструменты:
+
+- prometheus - сервер сбора метрик
+- grafana - сервер визуализации метрик
+- alertmanager - компонент prometheus для алертинга различные экспортеры для метрик prometheus
+
+Prometheus отлично подходит для работы с контейнерами и динамичным размещением сервисовб.
+
+### Установим Prometheus
+
+Prometheus будем ставить с помощью Helm чарта  
+Загрузим prometheus локально в Charts каталог
+
+```console
+helm fetch —-untar stable/prometheus
+```
+
+Создадим внутри директории чарта файл custom_values.yml:
+
 ```yml
+rbac:
+  create: false
+
+alertmanager:
+  ## If false, alertmanager will not be installed
+  ##
+  enabled: false
+
+  # Defines the serviceAccountName to use when `rbac.create=false`
+  serviceAccountName: default
+
+  ## alertmanager container name
+  ##
+  name: alertmanager
+
+  ## alertmanager container image
+  ##
+  image:
+    repository: prom/alertmanager
+    tag: v0.10.0
+    pullPolicy: IfNotPresent
+
+  ## Additional alertmanager container arguments
+  ##
+  extraArgs: {}
+
+  ## The URL prefix at which the container can be accessed. Useful in the case the '-web.external-url' includes a slug
+  ## so that the various internal URLs are still able to access as they are in the default case.
+  ## (Optional)
+  baseURL: "/"
+
+  ## Additional alertmanager container environment variable
+  ## For instance to add a http_proxy
+  ##
+  extraEnv: {}
+
+  ## ConfigMap override where fullname is {{.Release.Name}}-{{.Values.alertmanager.configMapOverrideName}}
+  ## Defining configMapOverrideName will cause templates/alertmanager-configmap.yaml
+  ## to NOT generate a ConfigMap resource
+  ##
+  configMapOverrideName: ""
+
+  ingress:
+    ## If true, alertmanager Ingress will be created
+    ##
+    enabled: false
+
+    ## alertmanager Ingress annotations
+    ##
+    annotations: {}
+    #   kubernetes.io/ingress.class: nginx
+    #   kubernetes.io/tls-acme: 'true'
+
+    ## alertmanager Ingress hostnames
+    ## Must be provided if Ingress is enabled
+    ##
+    hosts: []
+    #   - alertmanager.domain.com
+
+    ## alertmanager Ingress TLS configuration
+    ## Secrets must be manually created in the namespace
+    ##
+    tls: []
+    #   - secretName: prometheus-alerts-tls
+    #     hosts:
+    #       - alertmanager.domain.com
+
+  ## Alertmanager Deployment Strategy type
+  # strategy:
+  #   type: Recreate
+
+  ## Node labels for alertmanager pod assignment
+  ## Ref: https://kubernetes.io/docs/user-guide/node-selection/
+  ##
+  nodeSelector: {}
+
+  persistentVolume:
+    ## If true, alertmanager will create/use a Persistent Volume Claim
+    ## If false, use emptyDir
+    ##
+    enabled: true
+
+    ## alertmanager data Persistent Volume access modes
+    ## Must match those of existing PV or dynamic provisioner
+    ## Ref: http://kubernetes.io/docs/user-guide/persistent-volumes/
+    ##
+    accessModes:
+      - ReadWriteOnce
+
+    ## alertmanager data Persistent Volume Claim annotations
+    ##
+    annotations: {}
+
+    ## alertmanager data Persistent Volume existing claim name
+    ## Requires alertmanager.persistentVolume.enabled: true
+    ## If defined, PVC must be created manually before volume will be bound
+    existingClaim: ""
+
+    ## alertmanager data Persistent Volume mount root path
+    ##
+    mountPath: /data
+
+    ## alertmanager data Persistent Volume size
+    ##
+    size: 2Gi
+
+    ## alertmanager data Persistent Volume Storage Class
+    ## If defined, storageClassName: <storageClass>
+    ## If set to "-", storageClassName: "", which disables dynamic provisioning
+    ## If undefined (the default) or set to null, no storageClassName spec is
+    ##   set, choosing the default provisioner.  (gp2 on AWS, standard on
+    ##   GKE, AWS & OpenStack)
+    ##
+    # storageClass: "-"
+
+    ## Subdirectory of alertmanager data Persistent Volume to mount
+    ## Useful if the volume's root directory is not empty
+    ##
+    subPath: ""
+
+  ## Annotations to be added to alertmanager pods
+  ##
+  podAnnotations: {}
+
+  replicaCount: 1
+
+  ## alertmanager resource requests and limits
+  ## Ref: http://kubernetes.io/docs/user-guide/compute-resources/
+  ##
+  resources: {}
+    # limits:
+    #   cpu: 10m
+    #   memory: 32Mi
+    # requests:
+    #   cpu: 10m
+    #   memory: 32Mi
+
+  service:
+    annotations: {}
+    labels: {}
+    clusterIP: ""
+
+    ## List of IP addresses at which the alertmanager service is available
+    ## Ref: https://kubernetes.io/docs/user-guide/services/#external-ips
+    ##
+    externalIPs: []
+
+    loadBalancerIP: ""
+    loadBalancerSourceRanges: []
+    servicePort: 80
+    # nodePort: 30000
+    type: ClusterIP
+
+## Monitors ConfigMap changes and POSTs to a URL
+## Ref: https://github.com/jimmidyson/configmap-reload
+##
+configmapReload:
+  ## configmap-reload container name
+  ##
+  name: configmap-reload
+
+  ## configmap-reload container image
+  ##
+  image:
+    repository: jimmidyson/configmap-reload
+    tag: v0.1
+    pullPolicy: IfNotPresent
+
+  ## configmap-reload resource requests and limits
+  ## Ref: http://kubernetes.io/docs/user-guide/compute-resources/
+  ##
+  resources: {}
+
+kubeStateMetrics:
+  ## If false, kube-state-metrics will not be installed
+  ##
+  enabled: false
+
+  # Defines the serviceAccountName to use when `rbac.create=false`
+  serviceAccountName: default
+
+  ## kube-state-metrics container name
+  ##
+  name: kube-state-metrics
+
+  ## kube-state-metrics container image
+  ##
+  image:
+    repository: gcr.io/google_containers/kube-state-metrics
+    tag: v1.1.0
+    pullPolicy: IfNotPresent
+
+  ## Node labels for kube-state-metrics pod assignment
+  ## Ref: https://kubernetes.io/docs/user-guide/node-selection/
+  ##
+  nodeSelector: {}
+
+  ## Annotations to be added to kube-state-metrics pods
+  ##
+  podAnnotations: {}
+
+  replicaCount: 1
+
+  ## kube-state-metrics resource requests and limits
+  ## Ref: http://kubernetes.io/docs/user-guide/compute-resources/
+  ##
+  resources: {}
+    # limits:
+    #   cpu: 10m
+    #   memory: 16Mi
+    # requests:
+    #   cpu: 10m
+    #   memory: 16Mi
+
+  service:
+    annotations:
+      prometheus.io/scrape: "true"
+    labels: {}
+
+    clusterIP: None
+
+    ## List of IP addresses at which the kube-state-metrics service is available
+    ## Ref: https://kubernetes.io/docs/user-guide/services/#external-ips
+    ##
+    externalIPs: []
+
+    loadBalancerIP: ""
+    loadBalancerSourceRanges: []
+    servicePort: 80
+    type: ClusterIP
+
+nodeExporter:
+  ## If false, node-exporter will not be installed
+  ##
+  enabled: false
+
+  # Defines the serviceAccountName to use when `rbac.create=false`
+  serviceAccountName: default
+
+  ## node-exporter container name
+  ##
+  name: node-exporter
+
+  ## node-exporter container image
+  ##
+  image:
+    repository: prom/node-exporter
+    tag: v0.15.1
+    pullPolicy: IfNotPresent
+
+  ## Custom Update Strategy
+  ##
+  updateStrategy:
+    type: OnDelete
+
+  ## Additional node-exporter container arguments
+  ##
+  extraArgs: {}
+
+  ## Additional node-exporter hostPath mounts
+  ##
+  extraHostPathMounts: []
+    # - name: textfile-dir
+    #   mountPath: /srv/txt_collector
+    #   hostPath: /var/lib/node-exporter
+    #   readOnly: true
+
+  ## Node tolerations for node-exporter scheduling to nodes with taints
+  ## Ref: https://kubernetes.io/docs/concepts/configuration/assign-pod-node/
+  ##
+  tolerations: []
+    # - key: "key"
+    #   operator: "Equal|Exists"
+    #   value: "value"
+    #   effect: "NoSchedule|PreferNoSchedule|NoExecute(1.6 only)"
+
+  ## Node labels for node-exporter pod assignment
+  ## Ref: https://kubernetes.io/docs/user-guide/node-selection/
+  ##
+  nodeSelector: {}
+
+  ## Annotations to be added to node-exporter pods
+  ##
+  podAnnotations: {}
+
+  ## node-exporter resource limits & requests
+  ## Ref: https://kubernetes.io/docs/user-guide/compute-resources/
+  ##
+  resources: {}
+    # limits:
+    #   cpu: 200m
+    #   memory: 50Mi
+    # requests:
+    #   cpu: 100m
+    #   memory: 30Mi
+
+  service:
+    annotations:
+      prometheus.io/scrape: "true"
+    labels: {}
+
+    clusterIP: None
+
+    ## List of IP addresses at which the node-exporter service is available
+    ## Ref: https://kubernetes.io/docs/user-guide/services/#external-ips
+    ##
+    externalIPs: []
+
+    hostPort: 9100
+    loadBalancerIP: ""
+    loadBalancerSourceRanges: []
+    servicePort: 9100
+    type: ClusterIP
+
+server:
+  ## Prometheus server container name
+  ##
+  name: server
+
+  # Defines the serviceAccountName to use when `rbac.create=false`
+  serviceAccountName: default
+
+  ## Prometheus server container image
+  ##
+  image:
+    repository: prom/prometheus
+    tag: v2.0.0
+    pullPolicy: IfNotPresent
+
+  ## (optional) alertmanager hostname
+  ## only used if alertmanager.enabled = false
+  alertmanagerHostname: ""
+
+  ## The URL prefix at which the container can be accessed. Useful in the case the '-web.external-url' includes a slug
+  ## so that the various internal URLs are still able to access as they are in the default case.
+  ## (Optional)
+  baseURL: ""
+
+  ## Additional Prometheus server container arguments
+  ##
+  extraArgs: {}
+
+  ## Additional Prometheus server hostPath mounts
+  ##
+  extraHostPathMounts: []
+    # - name: certs-dir
+    #   mountPath: /etc/kubernetes/certs
+    #   hostPath: /etc/kubernetes/certs
+    #   readOnly: true
+
+  ## ConfigMap override where fullname is {{.Release.Name}}-{{.Values.server.configMapOverrideName}}
+  ## Defining configMapOverrideName will cause templates/server-configmap.yaml
+  ## to NOT generate a ConfigMap resource
+  ##
+  configMapOverrideName: ""
+
+  ingress:
+    ## If true, Prometheus server Ingress will be created
+    ##
+    enabled: true
+
+    ## Prometheus server Ingress annotations
+    ##
+    annotations: {}
+    #   kubernetes.io/ingress.class: nginx
+    #   kubernetes.io/tls-acme: 'true'
+
+    ## Prometheus server Ingress hostnames
+    ## Must be provided if Ingress is enabled
+    ##
+    hosts:
+     - reddit-prometheus
+
+    ## Prometheus server Ingress TLS configuration
+    ## Secrets must be manually created in the namespace
+    ##
+    tls: []
+    #   - secretName: prometheus-server-tls
+    #     hosts:
+    #       - prometheus.domain.com
+
+  ## Server Deployment Strategy type
+  # strategy:
+  #   type: Recreate
+
+  ## Node tolerations for server scheduling to nodes with taints
+  ## Ref: https://kubernetes.io/docs/concepts/configuration/assign-pod-node/
+  ##
+  tolerations: []
+    # - key: "key"
+    #   operator: "Equal|Exists"
+    #   value: "value"
+    #   effect: "NoSchedule|PreferNoSchedule|NoExecute(1.6 only)"
+
+  ## Node labels for Prometheus server pod assignment
+  ## Ref: https://kubernetes.io/docs/user-guide/node-selection/
+  nodeSelector: {}
+
+  persistentVolume:
+    ## If true, Prometheus server will create/use a Persistent Volume Claim
+    ## If false, use emptyDir
+    ##
+    enabled: true
+
+    ## Prometheus server data Persistent Volume access modes
+    ## Must match those of existing PV or dynamic provisioner
+    ## Ref: http://kubernetes.io/docs/user-guide/persistent-volumes/
+    ##
+    accessModes:
+      - ReadWriteOnce
+
+    ## Prometheus server data Persistent Volume annotations
+    ##
+    annotations: {}
+
+    ## Prometheus server data Persistent Volume existing claim name
+    ## Requires server.persistentVolume.enabled: true
+    ## If defined, PVC must be created manually before volume will be bound
+    existingClaim: ""
+
+    ## Prometheus server data Persistent Volume mount root path
+    ##
+    mountPath: /data
+
+    ## Prometheus server data Persistent Volume size
+    ##
+    size: 8Gi
+
+    ## Prometheus server data Persistent Volume Storage Class
+    ## If defined, storageClassName: <storageClass>
+    ## If set to "-", storageClassName: "", which disables dynamic provisioning
+    ## If undefined (the default) or set to null, no storageClassName spec is
+    ##   set, choosing the default provisioner.  (gp2 on AWS, standard on
+    ##   GKE, AWS & OpenStack)
+    ##
+    # storageClass: "-"
+
+    ## Subdirectory of Prometheus server data Persistent Volume to mount
+    ## Useful if the volume's root directory is not empty
+    ##
+    subPath: ""
+
+  ## Annotations to be added to Prometheus server pods
+  ##
+  podAnnotations: {}
+    # iam.amazonaws.com/role: prometheus
+
+  replicaCount: 1
+
+  ## Prometheus server resource requests and limits
+  ## Ref: http://kubernetes.io/docs/user-guide/compute-resources/
+  ##
+  resources: {}
+    # limits:
+    #   cpu: 500m
+    #   memory: 512Mi
+    # requests:
+    #   cpu: 500m
+    #   memory: 512Mi
+
+  service:
+    annotations: {}
+    labels: {}
+    clusterIP: ""
+
+    ## List of IP addresses at which the Prometheus server service is available
+    ## Ref: https://kubernetes.io/docs/user-guide/services/#external-ips
+    ##
+    externalIPs: []
+
+    loadBalancerIP: ""
+    loadBalancerSourceRanges: []
+    servicePort: 80
+    type: LoadBalancer
+
+  ## Prometheus server pod termination grace period
+  ##
+  terminationGracePeriodSeconds: 300
+
+  ## Prometheus data retention period (i.e 360h)
+  ##
+  retention: ""
+
+pushgateway:
+  ## If false, pushgateway will not be installed
+  ##
+  enabled: false
+
+  ## pushgateway container name
+  ##
+  name: pushgateway
+
+  ## pushgateway container image
+  ##
+  image:
+    repository: prom/pushgateway
+    tag: v0.4.0
+    pullPolicy: IfNotPresent
+
+  ## Additional pushgateway container arguments
+  ##
+  extraArgs: {}
+
+  ingress:
+    ## If true, pushgateway Ingress will be created
+    ##
+    enabled: false
+
+    ## pushgateway Ingress annotations
+    ##
+    annotations:
+    #   kubernetes.io/ingress.class: nginx
+    #   kubernetes.io/tls-acme: 'true'
+
+    ## pushgateway Ingress hostnames
+    ## Must be provided if Ingress is enabled
+    ##
+    hosts: []
+    #   - pushgateway.domain.com
+
+    ## pushgateway Ingress TLS configuration
+    ## Secrets must be manually created in the namespace
+    ##
+    tls: []
+    #   - secretName: prometheus-alerts-tls
+    #     hosts:
+    #       - pushgateway.domain.com
+
+  ## Node labels for pushgateway pod assignment
+  ## Ref: https://kubernetes.io/docs/user-guide/node-selection/
+  ##
+  nodeSelector: {}
+
+  ## Annotations to be added to pushgateway pods
+  ##
+  podAnnotations: {}
+
+  replicaCount: 1
+
+  ## pushgateway resource requests and limits
+  ## Ref: http://kubernetes.io/docs/user-guide/compute-resources/
+  ##
+  resources: {}
+    # limits:
+    #   cpu: 10m
+    #   memory: 32Mi
+    # requests:
+    #   cpu: 10m
+    #   memory: 32Mi
+
+  service:
+    annotations:
+      prometheus.io/probe: pushgateway
+    labels: {}
+    clusterIP: ""
+
+    ## List of IP addresses at which the pushgateway service is available
+    ## Ref: https://kubernetes.io/docs/user-guide/services/#external-ips
+    ##
+    externalIPs: []
+
+    loadBalancerIP: ""
+    loadBalancerSourceRanges: []
+    servicePort: 9091
+    type: ClusterIP
+
+## alertmanager ConfigMap entries
+##
+alertmanagerFiles:
+  alertmanager.yml: |-
+    global:
+      # slack_api_url: ''
+
+    receivers:
+      - name: default-receiver
+        # slack_configs:
+        #  - channel: '@you'
+        #    send_resolved: true
+
+    route:
+      group_wait: 10s
+      group_interval: 5m
+      receiver: default-receiver
+      repeat_interval: 3h
+
+## Prometheus server ConfigMap entries
+##
+serverFiles:
+  alerts: {}
+  rules: {}
+
+  prometheus.yml:
+    rule_files:
+      - /etc/config/rules
+      - /etc/config/alerts
+
+    global:
+      scrape_interval: 30s
+
+    scrape_configs:
+      - job_name: prometheus
+        static_configs:
+          - targets:
+            - localhost:9090
+
+      # A scrape configuration for running Prometheus on a Kubernetes cluster.
+      # This uses separate scrape configs for cluster components (i.e. API server, node)
+      # and services to allow each to use different authentication configs.
+      #
+      # Kubernetes labels will be added as Prometheus labels on metrics via the
+      # `labelmap` relabeling action.
+
+      # Scrape config for API servers.
+      #
+      # Kubernetes exposes API servers as endpoints to the default/kubernetes
+      # service so this uses `endpoints` role and uses relabelling to only keep
+      # the endpoints associated with the default/kubernetes service using the
+      # default named port `https`. This works for single API server deployments as
+      # well as HA API server deployments.
+      - job_name: 'kubernetes-apiservers'
+
+        kubernetes_sd_configs:
+          - role: endpoints
+
+        # Default to scraping over https. If required, just disable this or change to
+        # `http`.
+        scheme: https
+
+        # This TLS & bearer token file config is used to connect to the actual scrape
+        # endpoints for cluster components. This is separate to discovery auth
+        # configuration because discovery & scraping are two separate concerns in
+        # Prometheus. The discovery auth config is automatic if Prometheus runs inside
+        # the cluster. Otherwise, more config options have to be provided within the
+        # <kubernetes_sd_config>.
+        tls_config:
+          ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+          # If your node certificates are self-signed or use a different CA to the
+          # master CA, then disable certificate verification below. Note that
+          # certificate verification is an integral part of a secure infrastructure
+          # so this should only be disabled in a controlled environment. You can
+          # disable certificate verification by uncommenting the line below.
+          #
+          insecure_skip_verify: true
+        bearer_token_file: /var/run/secrets/kubernetes.io/serviceaccount/token
+
+        # Keep only the default/kubernetes service endpoints for the https port. This
+        # will add targets for each API server which Kubernetes adds an endpoint to
+        # the default/kubernetes service.
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_namespace, __meta_kubernetes_service_name, __meta_kubernetes_endpoint_port_name]
+            action: keep
+            regex: default;kubernetes;https
+
+      - job_name: 'kubernetes-nodes'
+
+        # Default to scraping over https. If required, just disable this or change to
+        # `http`.
+        scheme: https
+
+        # This TLS & bearer token file config is used to connect to the actual scrape
+        # endpoints for cluster components. This is separate to discovery auth
+        # configuration because discovery & scraping are two separate concerns in
+        # Prometheus. The discovery auth config is automatic if Prometheus runs inside
+        # the cluster. Otherwise, more config options have to be provided within the
+        # <kubernetes_sd_config>.
+        tls_config:
+          ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+          # If your node certificates are self-signed or use a different CA to the
+          # master CA, then disable certificate verification below. Note that
+          # certificate verification is an integral part of a secure infrastructure
+          # so this should only be disabled in a controlled environment. You can
+          # disable certificate verification by uncommenting the line below.
+          #
+          insecure_skip_verify: true
+        bearer_token_file: /var/run/secrets/kubernetes.io/serviceaccount/token
+
+        kubernetes_sd_configs:
+          - role: node
+
+        relabel_configs:
+          - action: labelmap
+            regex: __meta_kubernetes_node_label_(.+)
+          - target_label: __address__
+            replacement: kubernetes.default.svc:443
+          - source_labels: [__meta_kubernetes_node_name]
+            regex: (.+)
+            target_label: __metrics_path__
+            replacement: /api/v1/nodes/${1}/proxy/metrics/cadvisor
+
+      # Scrape config for service endpoints.
+      #
+      # The relabeling allows the actual service scrape endpoint to be configured
+      # via the following annotations:
+      #
+      # * `prometheus.io/scrape`: Only scrape services that have a value of `true`
+      # * `prometheus.io/scheme`: If the metrics endpoint is secured then you will need
+      # to set this to `https` & most likely set the `tls_config` of the scrape config.
+      # * `prometheus.io/path`: If the metrics path is not `/metrics` override this.
+      # * `prometheus.io/port`: If the metrics are exposed on a different port to the
+      # service then set this appropriately.
+      - job_name: 'kubernetes-service-endpoints'
+
+        kubernetes_sd_configs:
+          - role: endpoints
+
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_service_annotation_prometheus_io_scrape]
+            action: keep
+            regex: true
+          - source_labels: [__meta_kubernetes_service_annotation_prometheus_io_scheme]
+            action: replace
+            target_label: __scheme__
+            regex: (https?)
+          - source_labels: [__meta_kubernetes_service_annotation_prometheus_io_path]
+            action: replace
+            target_label: __metrics_path__
+            regex: (.+)
+          - source_labels: [__address__, __meta_kubernetes_service_annotation_prometheus_io_port]
+            action: replace
+            target_label: __address__
+            regex: (.+)(?::\d+);(\d+)
+            replacement: $1:$2
+          - action: labelmap
+            regex: __meta_kubernetes_service_label_(.+)
+          - source_labels: [__meta_kubernetes_namespace]
+            action: replace
+            target_label: kubernetes_namespace
+          - source_labels: [__meta_kubernetes_service_name]
+            action: replace
+            target_label: kubernetes_name
+
+      - job_name: 'prometheus-pushgateway'
+        honor_labels: true
+
+        kubernetes_sd_configs:
+          - role: service
+
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_service_annotation_prometheus_io_probe]
+            action: keep
+            regex: pushgateway
+
+      # Example scrape config for probing services via the Blackbox Exporter.
+      #
+      # The relabeling allows the actual service scrape endpoint to be configured
+      # via the following annotations:
+      #
+      # * `prometheus.io/probe`: Only probe services that have a value of `true`
+      - job_name: 'kubernetes-services'
+
+        metrics_path: /probe
+        params:
+          module: [http_2xx]
+
+        kubernetes_sd_configs:
+          - role: service
+
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_service_annotation_prometheus_io_probe]
+            action: keep
+            regex: true
+          - source_labels: [__address__]
+            target_label: __param_target
+          - target_label: __address__
+            replacement: blackbox
+          - source_labels: [__param_target]
+            target_label: instance
+          - action: labelmap
+            regex: __meta_kubernetes_service_label_(.+)
+          - source_labels: [__meta_kubernetes_namespace]
+            target_label: kubernetes_namespace
+          - source_labels: [__meta_kubernetes_service_name]
+            target_label: kubernetes_name
+
+      # Example scrape config for pods
+      #
+      # The relabeling allows the actual pod scrape endpoint to be configured via the
+      # following annotations:
+      #
+      # * `prometheus.io/scrape`: Only scrape pods that have a value of `true`
+      # * `prometheus.io/path`: If the metrics path is not `/metrics` override this.
+      # * `prometheus.io/port`: Scrape the pod on the indicated port instead of the default of `9102`.
+      - job_name: 'kubernetes-pods'
+
+        kubernetes_sd_configs:
+          - role: pod
+
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_scrape]
+            action: keep
+            regex: true
+          - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_path]
+            action: replace
+            target_label: __metrics_path__
+            regex: (.+)
+          - source_labels: [__address__, __meta_kubernetes_pod_annotation_prometheus_io_port]
+            action: replace
+            regex: (.+):(?:\d+);(\d+)
+            replacement: ${1}:${2}
+            target_label: __address__
+          - action: labelmap
+            regex: __meta_kubernetes_pod_label_(.+)
+          - source_labels: [__meta_kubernetes_namespace]
+            action: replace
+            target_label: kubernetes_namespace
+          - source_labels: [__meta_kubernetes_pod_name]
+            action: replace
+            target_label: kubernetes_pod_name
+
+networkPolicy:
+  ## Enable creation of NetworkPolicy resources.
+  ##
+  enabled: false
+```
+
+Основные отличия от values.yml:
+
+- отключена часть устанавливаемых сервисов (pushgateway, alertmanager, kube-state-metrics)
+- включено создание Ingress’а для подключения через nginx поправлен endpoint для сбора метрик cadvisor
+- уменьшен интервал сбора метрик (с 1 минуты до 30 секунд)
+
+Запустим Prometheus в k8s из charsts/prometheus:
+
+```console
+helm upgrade prom . -f custom_values.yml --install
+```
+
+Заходим http://reddit-prometheus/ и далее в Targets
+
+### Targets
+
+У нас уже присутствует ряд endpoint’ов для сбора метрик:
+
+- Метрики API-сервера
+- метрики нод с cadvisor’ов
+- сам prometheus
+
+Отметим, что можно собирать метрики cadvisor’а (который уже является частью kubelet) через проксирующий запрос в kube-apiserver
+
+Если зайти по ssh на любую из машин кластера и запросить $curl <http://localhost:4194/metrics/> то получим те же метрики у kubelet
+напрямую
+
+**Но вариант с kube-api предпочтительней, т.к. этот трафик шифруется TLS и требует аутентификации.**
+
+Таргеты для сбора метрик найдены с помощью service discovery (SD), настроенного в конфиге prometheus (лежит в customvalues.yml):
+
+```yml
+...
+      - job_name: 'kubernetes-apiservers'    # kubernetes-apiservers (1/1 up)
+      ...
+      - job_name: 'kubernetes-nodes'         # kubernetes-nodes (3/3 up)
+        kubernetes_sd_configs:               # Настройки Service Discovery (для поиска target’ов)
+          - role: node
+
+        scheme: https                        # Настройки подключения к target’ам (для сбора метрик)
+        tls_config:
+          ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+          insecure_skip_verify: true
+        bearer_token_file: /var/run/secrets/kubernetes.io/serviceaccount/token
+        relabel_configs:                    # Настройки различных меток, фильтрация найденных таргетов, их изменений
+
+```
+
+Использование SD в kubernetes позволяет нам динамично менять кластер (как сами хосты, так и сервисы и приложения)
+
+Цели для мониторинга находим c помощью запросов к k8s API:
+
+prometheus.yml:
+
+```yml
+...
+    scrape_configs:
+      - job_name: 'kubernetes-nodes'
+        kubernetes_sd_configs:
+          - role: node          # Role объект, который нужно найти:
+                                # - node
+                                # - endpoints
+                                # - pod
+                                # - service
+                                # - ingress
+```
+
+Т.к. сбор метрик prometheus осуществляется поверх стандартного HTTP-протокола, то могут понадобится доп. настройки для безопасного доступа к метрикам.
+
+Ниже приведены настройки для сбора метрик из k8s AP:
+
+```yml
+scheme: https
+tls_config:
+  ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+  insecure_skip_verify: true
+bearer_token_file: /var/run/secrets/kubernetes.io/serviceaccount/token
+```
+
+1. Схема подключения - http (default) или https
+2. Конфиг TLS - коревой сертификат сервера для проверки достоверности сервера
+3. Токен для аутентификации насервере
+
+Targets:
+
+- gke-cluster-1-default-pool-f9c66281-kxrc
+- gke-cluster-1-default-pool-f9c66281-8gkc
+- gke-cluster-1-big-pool-b4209075-jlnq
+
+Подробнее о том, как работает [relabel_config](https://prometheus.io/docs/prometheus/latest/configuration/configuration/#relabel_config)
+
+```yml
+#Kubernetes nodes
+relabel_configs:
+- action: labelmap                             # преобразовать все k8s лейблы таргета в лейблы prometheus
+  regex: __meta_kubernetes_node_label_(.+)
+- target_label: __address__                    # Поменять лейбл для адреса сбора метрик
+  replacement: kubernetes.default.svc:443
+- source_labels: [__meta_kubernetes_node_name] # Поменять лейбл для пути
+сбора метрик
+  regex: (.+)
+  target_label: __metrics_path__
+  replacement: /api/v1/nodes/${1}/proxy/metrics/cadvisor
+```
+
+В результате получим такие лейблы в prometheus.
+
+### Metrics
+
+Все найденные на эндпоинтах метрики сразу же отобразятся в списке (вкладка Graph). Метрики Cadvisor начинаются с container_.
+
+Cadvisor собирает лишь информацию о потреблении ресурсов и производительности отдельных docker-контейнеров. При этом он
+ничего не знает о сущностях k8s (деплойменты, репликасеты, ...).
+
+Для сбора этой информации будем использовать сервис kubestate-metrics. Он входит в чарт Prometheus. Включим его.
+
+prometheus/custom_values.yml
+
+```yml
+...
+kubeStateMetrics:
+   ## If false, kube-state-metrics will not be installed
+   ##
+   enabled: true
+```
+
+Обновим релиз:
+
+```console
+helm upgrade prom . -f custom_values.yml --install
+```
+
+По аналогии с kube_state_metrics включиим (enabled: true) поды node-exporter в custom_values.yml.
+
+Проверимм, что метрики начали собираться с них.
+
+Запустим приложение из helm чарта reddit:
+
+```console
 helm upgrade  reddit-test ./reddit --install
-Release "reddit-test" does not exist. Installing it now.
-NAME:   reddit-test
-LAST DEPLOYED: Wed Feb 26 22:32:53 2020
-NAMESPACE: default
-STATUS: DEPLOYED
-
-RESOURCES:
-==> v1/Deployment
-NAME                 AGE
-reddit-test-comment  1s
-reddit-test-mongodb  1s
-reddit-test-post     1s
-reddit-test-ui       1s
-
-==> v1/PersistentVolumeClaim
-NAME                 AGE
-reddit-test-mongodb  1s
-
-==> v1/Pod(related)
-NAME                                  AGE
-reddit-test-comment-67f446fd65-kfjfr  1s
-reddit-test-mongodb-5f647684fd-jx92z  1s
-reddit-test-post-6d77f85b68-8fxfp     1s
-reddit-test-ui-5587d6c6d6-zx55c       1s
-
-==> v1/Service
-NAME                 AGE
-reddit-test-comment  1s
-reddit-test-mongodb  1s
-reddit-test-post     1s
-reddit-test-ui       1s
-
-==> v1beta1/Ingress
-NAME            AGE
-reddit-test-ui  1s
+helm upgrade production --namespace production ./reddit --install
+helm upgrade staging --namespace staging ./reddit --install
 ```
+
+Раньше мы “хардкодили” адреса/dns-имена наших приложений для сбора метрик с них.
+
+prometheus.yml
 
 ```yml
-helm upgrade production --namespace production ./reddit --install
-Release "production" does not exist. Installing it now.
-NAME:   production
-LAST DEPLOYED: Wed Feb 26 22:33:43 2020
-NAMESPACE: production
-STATUS: DEPLOYED
-
-RESOURCES:
-==> v1/Deployment
-NAME                AGE
-production-comment  1s
-production-mongodb  1s
-production-post     1s
-production-ui       1s
-
-==> v1/PersistentVolumeClaim
-NAME                AGE
-production-mongodb  1s
-
-==> v1/Pod(related)
-NAME                                 AGE
-production-comment-c5b77989f-qxqcf   1s
-production-mongodb-59c7fbb97b-xcqkn  1s
-production-post-6d47954668-sjzs8     1s
-production-ui-5b987c66d-fdtq6        1s
-
-==> v1/Service
-NAME                AGE
-production-comment  1s
-production-mongodb  1s
-production-post     1s
-production-ui       1s
-
-==> v1beta1/Ingress
-NAME           AGE
+- job_name: 'ui'
+  static_configs:
+    - targets:
+      - 'ui:9292'
+- job_name: 'comment'
+  static_configs:
+    - targets:
+      - 'comment:9292'
 ```
 
+Теперь мы можем использовать механизм ServiceDiscovery для обнаружения приложений, запущенных в k8s.
 
-```
-helm upgrade staging --namespace staging ./reddit --install
-Release "staging" does not exist. Installing it now.
-NAME:   staging
-LAST DEPLOYED: Wed Feb 26 22:34:51 2020
-NAMESPACE: staging
-STATUS: DEPLOYED
+Приложения будем искать так же, как и служебные сервисы k8s.
 
-RESOURCES:
-==> v1/Deployment
-NAME             AGE
-staging-comment  1s
-staging-mongodb  1s
-staging-post     1s
-staging-ui       1s
+Модернизируем конфиг prometheus:
 
-==> v1/PersistentVolumeClaim
-NAME             AGE
-staging-mongodb  1s
+custom_values.yml
 
-==> v1/Pod(related)
-NAME                              AGE
-staging-comment-75c967b5c7-wg7z8  1s
-staging-mongodb-78d76b5784-4trdr  1s
-staging-post-5d6fdd5f7b-8648l     1s
-staging-ui-c4ddf7488-tvkb9        1s
-
-==> v1/Service
-NAME             AGE
-staging-comment  1s
-staging-mongodb  1s
-staging-post     1s
-staging-ui       1s
-
-==> v1beta1/Ingress
-NAME        AGE
-staging-ui  1s
+```yml
+- job_name: 'reddit-endpoints'
+    kubernetes_sd_configs:
+      - role: endpoints
+    relabel_configs:
+      - source_labels: [__meta_kubernetes_service_label_app]
+        action: keep    # Используем действие keep, чтобы оставить
+        regex: reddit   # только эндпоинты сервисов с метками
+                        # “app=reddit”
 ```
 
+Обновим релиз prometheus:
 
+```console
+helm upgrade prom . -f custom_values.yml --install
+```
+
+Мы получили эндпоинты, но что это за поды мы не знаем. Добавим метки k8s.
+
+Все лейблы и аннотации k8s изначально отображаются в prometheus в формате:
+
+- __meta_kubernetes_service_label**_labelname**
+- __meta_kubernetes_service_annotation**_annotationname**
+
+custom_values.yml
+
+```yml
+relabel_configs:
+  - action: labelmap                            # Отобразить все совпадения групп
+    regex: __meta_kubernetes_service_label_(.+) # из regex в label’ы Prometheus
+```
+
+Обновим релиз prometheus:
+
+```console
+helm upgrade prom . -f custom_values.yml --install
+```
+
+Теперь мы видим лейблы k8s, присвоенные POD’ам.
+
+Добавим еще label’ы для prometheus и обновим helm-релиз Т.к. метки вида **_meta** не публикуются, то нужно создать свои, перенеся в них информацию:
+
+```yml
+- source_labels: [__meta_kubernetes_namespace]
+  target_label: kubernetes_namespace
+- source_labels: [__meta_kubernetes_service_name]
+  target_label: kubernetes_name
+```
+
+Обновим релиз prometheus:
+
+```console
+helm upgrade prom . -f custom_values.yml --install
+```
+
+Сейчас мы собираем метрики со всех сервисов reddit’а в 1 группе target-ов. Мы можем отделить target-ы компонент друг от друга (по окружениям, по самим компонентам), а также выключать и включать опцию мониторинга для них с помощью все тех же labelов. Например, добавим в конфиг еще 1 job.
+
+```yml
+- job_name: 'reddit-production'
+   kubernetes_sd_configs:
+     - role: endpoints
+   relabel_configs:
+     - action: labelmap
+       regex: __meta_kubernetes_service_label_(.+)
+     - source_labels: [__meta_kubernetes_service_label_app, __meta_kubernetes_namespace]
+       action: keep                                 # Для разных лейблов
+       regex: reddit;(production|staging)+          # разные регекспы
+     - source_labels: [__meta_kubernetes_namespace]
+       target_label: kubernetes_namespace
+     - source_labels: [__meta_kubernetes_service_name]
+       target_label: kubernetes_name
+```
+
+Обновим релиз prometheus и посмотрим. Метрики будут отображаться для всех инстансов приложений.
+
+Далее разобъем конфигурацию job’а reddit-endpoints так, чтобы было 3 job’а для каждой из компонент приложений (post-endpoints, comment-endpoints, ui-endpoints), а reddit-endpoints уберем.
+
+```yml
+      - job_name: 'post-endpoints'
+        kubernetes_sd_configs:
+          - role: endpoints
+        relabel_configs:
+          - action: labelmap
+            regex: __meta_kubernetes_service_label_(.+)
+          - source_labels: [__meta_kubernetes_service_label_app, __meta_kubernetes_service_label_component]
+            action: keep
+            regex: reddit;post
+          - source_labels: [__meta_kubernetes_namespace]
+            target_label: kubernetes_namespace
+          - source_labels: [__meta_kubernetes_service_name]
+            target_label: kubernetes_name 
+
+      - job_name: 'ui-endpoints'
+        kubernetes_sd_configs:
+          - role: endpoints
+        relabel_configs:
+          - action: labelmap
+            regex: __meta_kubernetes_service_label_(.+)
+          - source_labels: [__meta_kubernetes_service_label_app, __meta_kubernetes_service_label_component]
+            action: keep
+            regex: reddit;ui
+          - source_labels: [__meta_kubernetes_namespace]
+            target_label: kubernetes_namespace
+          - source_labels: [__meta_kubernetes_service_name]
+            target_label: kubernetes_name 
+
+      - job_name: 'comment-endpoints'
+        kubernetes_sd_configs:
+          - role: endpoints
+        relabel_configs:
+          - action: labelmap
+            regex: __meta_kubernetes_service_label_(.+)
+          - source_labels: [__meta_kubernetes_service_label_app, __meta_kubernetes_service_label_component]
+            action: keep
+            regex: reddit;comment
+          - source_labels: [__meta_kubernetes_namespace]
+            target_label: kubernetes_namespace
+          - source_labels: [__meta_kubernetes_service_name]
+            target_label: kubernetes_name
+```
+
+### Визуализация
+
+Поставим также grafana с помощью helm:
+
+```console
 helm upgrade --install grafana stable/grafana --set "adminPassword=admin" \
 --set "service.type=NodePort" \
 --set "ingress.enabled=true" \
 --set "ingress.hosts={reddit-grafana}"
+```
 
+> http://reddit-grafana/  
+> user: admin  
+> pass: admin
 
+Добавим prometheus data-source в GUi.
 
-kubectl label node gke-k8s-cluster-bigpool-60ecbd99-kzh8 elastichost=true   
+Адрес найдем из имени сервиса prometheus сервера:
+
+```console
+kubectl get svc
+```
+
+Добавим самый [распространенный dashboard](https://grafana.com/grafana/dashboards/315) для отслеживания состояния ресурсов k8s.
+
+Добавьте собственные дашборды, созданные ранее (в ДЗ по мониторингу). Они должны также успешно отобразить данные.
+
+### Templating
+
+В текущий момент на графиках, относящихся к приложению, одновременно отображены значения метрик со всех источников сразу. При большом количестве сред и при их динамичном изменении имеет смысл сделать динамичной и удобно настройку наших дашбордов в Grafana.
+
+Сделать это можно в нашем случае с помощью механизма templating’а.
+
+- создадмим новую переменную
+- Name: namespace
+- Label: Env
+- Type: Query
+- Quary: label_values(namespace) - получить значения всех label-ов kubernetes_namespace
+- Regex: /.+/ - отфильтруем (уберем пустой namespace)
+- Multi-value - checked - возможность выбирать несколько значений
+- Include All option - checked - возножность выбирать все значения одной кнопкой
+
+У нас появился список со значениями переменной.
+
+Пока что они бесполезны. Чтобы их использование имело эффект нужно шаблонизировать запросы к Prometheus.
+
+Меняем запрос в графиках на: {kubernetes_namespace=~"$namespace"}
+
+Теперь мы можем настраивать общие шаблоны графиков и с помощью переменных менять в них нужные нам поля (в нашем случае это namespace).
+
+Параметризуем все Dashboard’ы, отражающие параметры работы приложения (созданные нами в предыдущих ДЗ) reddit для работы с несколькими окружениями (неймспейсами).
+
+Получившиеся дашборды сохраним в репозиторий ./kubernetes/Grafana/Dashboards/.
+
+### Смешанные графики
+
+Импортируем следующий график: [https://grafana.com/dashboards/741](https://grafana.com/dashboards/741)
+
+На этом графике одновременно используются метрики и шаблоны из cAdvisor, и из kube-state-metrics для отображения сводной информации по деплойментам.
+
+### Логирование
+
+Добавим label самой мощной ноде в кластере:
+
+```console
+kubectl label node gke-k8s-cluster-bigpool-60ecbd99-kzh8 elastichost=true
+
 node/gke-k8s-cluster-bigpool-60ecbd99-kzh8 labeled
+```
 
+Логирование в k8s будем выстраивать с помощью уже известного стека EFK:
 
+- ElasticSearch - база данных + поисковый движок
+- Fluentd - шипер (отправитель) и агрегатор логов
+- Kibana - веб-интерфейс для запросов в хранилище и отображения их результатов
+
+Создадим файлы в новой папке kubernetes/efk/:
+
+- fluentd-ds.yaml
+- fluentd-configmap.yaml
+- es-service.yaml
+- es-statefulSet.yaml
+- es-pvc.yaml
+
+Запустим стек в вашем k8s:
+
+```console
+kubectl apply -f ./efk
+```
+
+Kibana поставим из helm чарта:
+
+```console
 helm upgrade --install kibana stable/kibana \
 --set "ingress.enabled=true" \
 --set "ingress.hosts={reddit-kibana}" \
 --set "env.ELASTICSEARCH_URL=http://elasticsearch-logging:9200" \
 --set "service.type=NodePort" \
 --version 0.1.1
+```
 
-35.205.119.29 reddit-kibana reddit reddit-prometheus reddit-grafana reddit-non-prod production staging prod
+> http://reddit-kibana/
 
+- создадим шаблон индекса (fluentd-*)
+- откроем вкладку Discover в Kibana и введите в строку поиска выражение: **kubernetes.labels component:post OR kubernetes.labels.component:comment OR kubernetes.labels.component:ui**
+
+Откроем любой из рез-тов поиска - в нем видно множество инфы о k8s.
+
+1. Особенность работы fluentd в k8s состоит в том, что его задача помимо сбора самих логов приложений, сервисов и хостов, также распознать дополнительные метаданные (как правило это дополнительные поля с лейблами)
+2. Откуда и какие логи собирает fluentd - видно в его fluentd-configmap.yaml и в fluentd-ds.yaml
 
 ## CI/CD в Kubernetes
 
